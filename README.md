@@ -7,7 +7,7 @@ or down with a single command.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/scotthellingsnm/tmux/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/scottdsnr/tmux-workspace-manager/refs/heads/master/install.sh| bash
 ```
 
 This downloads `manage-workspace.py` to `~/.local/bin/tmux-workspace` and makes
