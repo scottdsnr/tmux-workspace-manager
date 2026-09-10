@@ -10,20 +10,27 @@ or down with a single command.
 curl -fsSL https://raw.githubusercontent.com/scottdsnr/tmux-workspace-manager/master/install.sh | bash
 ```
 
-This downloads `manage-workspace.py` to `~/.local/bin/tmux-workspace` and makes
-it executable. Inspect [`install.sh`](./install.sh) before piping it to `bash`
-if you'd like to see exactly what it does.
+This downloads a prebuilt release binary for your OS/architecture (Linux or
+macOS, amd64 or arm64) to `~/.local/bin/tmux-workspace`, verifies its
+checksum, and makes it executable. No Python, no Go toolchain, no other
+runtime required on the target machine — just `tmux` itself. Inspect
+[`install.sh`](./install.sh) before piping it to `bash` if you'd like to see
+exactly what it does.
 
 If `~/.local/bin` isn't already on your `PATH`, the installer will tell you
 what to add to your shell profile.
 
-**Requirements:** `python3`, [`PyYAML`](https://pypi.org/project/PyYAML/)
-(`pip install pyyaml`, or your distro's `python-yaml` package), and `tmux`.
+**Requirements:** `tmux`. That's it — the installed binary is self-contained.
 
-**Manual install:** copy `manage-workspace.py` anywhere on your `PATH` and
-`chmod +x` it. Everything below assumes the command is called
-`tmux-workspace`; substitute your own name/path if you installed it
-differently.
+**Manual install:** download the archive for your platform from the
+[latest release](https://github.com/scottdsnr/tmux-workspace-manager/releases/latest),
+extract it, and put the `tmux-workspace` binary anywhere on your `PATH`.
+Everything below assumes the command is called `tmux-workspace`; substitute
+your own name/path if you installed it differently.
+
+**Building from source:** with a Go toolchain installed, either
+`go install github.com/scottdsnr/tmux-workspace-manager@latest`, or clone the
+repo and run `go build -o tmux-workspace .`.
 
 ## Quick start
 
