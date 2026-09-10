@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import json
 import os
 import shlex
 import shutil
@@ -8,11 +7,21 @@ import sys
 import argparse
 import time
 
+try:
+    import yaml
+except ImportError:
+    print("error: PyYAML is required (pip install pyyaml, or your system's python-yaml package).", file=sys.stderr)
+    sys.exit(1)
+
 CONFIG_DIR = os.path.expanduser("~/.config/tmux-workspaces")
 # Settings live in their own subdirectory, not alongside the flat
-# <alias>.json workspace profiles, so a settings filename can never
+# <alias>.yml workspace profiles, so a settings filename can never
 # collide with a workspace alias.
-SETTINGS_PATH = os.path.join(CONFIG_DIR, ".settings", "settings.json")
+SETTINGS_PATH = os.path.join(CONFIG_DIR, ".settings", "settings.yml")
+# Pre-YAML installs wrote settings.json / <alias>.json. Both are still read
+# transparently (valid JSON parses fine as YAML); every write goes to the
+# new .yml path, so profiles migrate the first time they're saved.
+LEGACY_SETTINGS_PATH = os.path.join(CONFIG_DIR, ".settings", "settings.json")
 
 DEFAULT_SETTINGS = {
     "base_dir": "~",
@@ -63,12 +72,13 @@ def sym(key):
 
 def load_settings():
     settings = dict(DEFAULT_SETTINGS)
-    if os.path.exists(SETTINGS_PATH):
+    path = SETTINGS_PATH if os.path.exists(SETTINGS_PATH) else LEGACY_SETTINGS_PATH
+    if os.path.exists(path):
         try:
-            with open(SETTINGS_PATH) as f:
-                settings.update(json.load(f))
-        except (json.JSONDecodeError, OSError) as exc:
-            err(f"{sym('warn')}Failed to read {SETTINGS_PATH} ({exc}); using defaults.")
+            with open(path) as f:
+                settings.update(yaml.safe_load(f) or {})
+        except (yaml.YAMLError, OSError) as exc:
+            err(f"{sym('warn')}Failed to read {path} ({exc}); using defaults.")
     return settings
 
 
@@ -199,17 +209,42 @@ def tmux_attach(session):
 
 # --- config -----------------------------------------------------------------
 
+def config_paths(alias):
+    """Return (yml_path, legacy_json_path) for an alias."""
+    return (
+        os.path.join(CONFIG_DIR, f"{alias}.yml"),
+        os.path.join(CONFIG_DIR, f"{alias}.json"),
+    )
+
+
+def find_config_path(alias):
+    yml_path, json_path = config_paths(alias)
+    if os.path.exists(yml_path):
+        return yml_path
+    if os.path.exists(json_path):
+        return json_path
+    return None
+
+
 def load_config(alias):
-    config_path = os.path.join(CONFIG_DIR, f"{alias}.json")
-    if not os.path.exists(config_path):
+    config_path = find_config_path(alias)
+    if not config_path:
         err(f"{sym('error')}Workspace alias '{alias}' does not exist.")
         sys.exit(1)
     try:
         with open(config_path) as f:
-            return json.load(f)
-    except json.JSONDecodeError as exc:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
         err(f"{sym('error')}Failed to parse {config_path}: {exc}")
         sys.exit(1)
+
+
+def save_config(alias, config):
+    yml_path, _ = config_paths(alias)
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    with open(yml_path, "w") as f:
+        yaml.safe_dump(config, f, sort_keys=False, default_flow_style=False)
+    return yml_path
 
 
 def validate_config(config):
@@ -253,24 +288,28 @@ def validate_workspace_cmd(alias):
 
 def list_workspaces():
     if not os.path.exists(CONFIG_DIR) or not os.listdir(CONFIG_DIR):
-        print(f"{sym('info')}No workspaces found. Create .json profiles inside: {CONFIG_DIR}")
+        print(f"{sym('info')}No workspaces found. Create .yml profiles inside: {CONFIG_DIR}")
         return
 
-    entries = []
+    aliases = {}
     for filename in sorted(os.listdir(CONFIG_DIR)):
-        if not filename.endswith(".json"):
-            continue
-        alias = filename[:-5]
+        if filename.endswith(".yml"):
+            aliases[filename[:-4]] = filename
+        elif filename.endswith(".json"):
+            aliases.setdefault(filename[:-5], filename)  # .yml takes priority if both exist
+
+    entries = []
+    for alias, filename in sorted(aliases.items()):
         try:
             with open(os.path.join(CONFIG_DIR, filename)) as f:
-                cfg = json.load(f)
+                cfg = yaml.safe_load(f) or {}
             display_name = cfg.get("project_name_display", "Unnamed Project")
             entries.append((alias, display_name, has_session(alias), None))
-        except (json.JSONDecodeError, OSError) as exc:
+        except (yaml.YAMLError, OSError) as exc:
             entries.append((alias, None, None, str(exc)))
 
     if not entries:
-        print(f"{sym('info')}No workspaces found. Create .json profiles inside: {CONFIG_DIR}")
+        print(f"{sym('info')}No workspaces found. Create .yml profiles inside: {CONFIG_DIR}")
         return
 
     alias_w = max([6] + [len(a) for a, *_ in entries])
@@ -288,8 +327,8 @@ def list_workspaces():
 
 
 def edit_workspace_raw(alias):
-    config_path = os.path.join(CONFIG_DIR, f"{alias}.json")
-    if not os.path.exists(config_path):
+    config_path = find_config_path(alias)
+    if not config_path:
         err(f"{sym('error')}Workspace alias '{alias}' does not exist.")
         sys.exit(1)
     open_in_editor(config_path)
@@ -297,15 +336,15 @@ def edit_workspace_raw(alias):
 
 def edit_settings():
     os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
-    if not os.path.exists(SETTINGS_PATH):
+    if not os.path.exists(SETTINGS_PATH) and not os.path.exists(LEGACY_SETTINGS_PATH):
         with open(SETTINGS_PATH, "w") as f:
-            json.dump(DEFAULT_SETTINGS, f, indent=2)
+            yaml.safe_dump(DEFAULT_SETTINGS, f, sort_keys=False, default_flow_style=False)
         print(f"{sym('sparkle')}Created default settings file at {SETTINGS_PATH}")
-    open_in_editor(SETTINGS_PATH)
+    path = SETTINGS_PATH if os.path.exists(SETTINGS_PATH) else LEGACY_SETTINGS_PATH
+    open_in_editor(path)
 
 
 def edit_workspace_interactive(alias):
-    config_path = os.path.join(CONFIG_DIR, f"{alias}.json")
     config = load_config(alias)
 
     print(f"\n{sym('wave')}Interactive Editor for Profile: '{alias}' {sym('wave')}")
@@ -431,9 +470,8 @@ def edit_workspace_interactive(alias):
             err(f"   - {e}")
         sys.exit(1)
 
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
-    print(f"\n{sym('check')}Profile '{alias}' updated successfully!")
+    saved_path = save_config(alias, config)
+    print(f"\n{sym('check')}Profile '{alias}' updated successfully! ({saved_path})")
 
 
 def _validate_alias(alias):
@@ -442,7 +480,7 @@ def _validate_alias(alias):
         return "cannot be empty or contain spaces"
     if alias == "settings":
         return "'settings' is reserved"
-    candidate = os.path.abspath(os.path.join(CONFIG_DIR, f"{alias}.json"))
+    candidate = os.path.abspath(os.path.join(CONFIG_DIR, f"{alias}.yml"))
     if os.path.dirname(candidate) != os.path.abspath(CONFIG_DIR):
         return "cannot contain path separators or '..'"
     return None
@@ -461,8 +499,8 @@ def create_workspace_wizard(preset_alias=None):
             print(f"{sym('error')}Invalid alias ({alias_error}).")
         alias = input(f"{sym('label')}Enter short workspace alias (e.g., am): ").strip().lower()
 
-    config_path = os.path.join(CONFIG_DIR, f"{alias}.json")
-    if os.path.exists(config_path):
+    config_path = find_config_path(alias)
+    if config_path:
         overwrite = input(f"{sym('warn')}Alias '{alias}' already exists. Overwrite? (y/N): ").strip().lower()
         if overwrite != 'y':
             print(f"{sym('error')}Operation cancelled.")
@@ -526,11 +564,8 @@ def create_workspace_wizard(preset_alias=None):
         "teardown": teardown,
     }
 
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(config_path, 'w') as f:
-        json.dump(workspace_data, f, indent=2)
-
-    print(f"\n{sym('check')}Configuration saved to: {config_path}")
+    saved_path = save_config(alias, workspace_data)
+    print(f"\n{sym('check')}Configuration saved to: {saved_path}")
 
 
 def start_workspace(alias, dry_run=False):
@@ -670,6 +705,79 @@ def stop_workspace(alias, dry_run=False, assume_yes=False):
     print(f"{sym('check')}Completed clean exit!")
 
 
+def upgrade_configs(dry_run=False):
+    """Convert legacy JSON profiles/settings under CONFIG_DIR to YAML in place."""
+    if not os.path.isdir(CONFIG_DIR):
+        print(f"{sym('info')}No config directory found at {CONFIG_DIR}; nothing to upgrade.")
+        return
+
+    converted = 0
+    skipped = 0
+
+    # Settings: the canonical legacy path (.settings/settings.json), plus a
+    # flat CONFIG_DIR/settings.json some older installs mistakenly wrote to.
+    for legacy_settings in (LEGACY_SETTINGS_PATH, os.path.join(CONFIG_DIR, "settings.json")):
+        if not os.path.exists(legacy_settings):
+            continue
+        if os.path.exists(SETTINGS_PATH):
+            print(f"{sym('warn')}{SETTINGS_PATH} already exists; leaving {legacy_settings} untouched.")
+            skipped += 1
+            break
+        try:
+            with open(legacy_settings) as f:
+                data = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            err(f"{sym('error')}Failed to parse {legacy_settings}: {exc}")
+            break
+        if dry_run:
+            print(f"   {sym('dry')}[dry-run] would convert {legacy_settings} -> {SETTINGS_PATH}")
+        else:
+            os.makedirs(os.path.dirname(SETTINGS_PATH), exist_ok=True)
+            with open(SETTINGS_PATH, "w") as f:
+                yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
+            backup = legacy_settings + ".bak"
+            os.rename(legacy_settings, backup)
+            print(f"{sym('check')}Converted settings: {legacy_settings} -> {SETTINGS_PATH} (backup: {backup})")
+        converted += 1
+        break
+
+    # Workspace profiles: every top-level <alias>.json, skipping a flat
+    # settings.json (handled above, never a real workspace alias).
+    for filename in sorted(os.listdir(CONFIG_DIR)):
+        if filename == "settings.json" or not filename.endswith(".json"):
+            continue
+        if not os.path.isfile(os.path.join(CONFIG_DIR, filename)):
+            continue
+        alias = filename[:-5]
+        legacy_path = os.path.join(CONFIG_DIR, filename)
+        yml_path, _ = config_paths(alias)
+        if os.path.exists(yml_path):
+            print(f"{sym('warn')}{yml_path} already exists; leaving {legacy_path} untouched.")
+            skipped += 1
+            continue
+        try:
+            with open(legacy_path) as f:
+                data = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            err(f"{sym('error')}Failed to parse {legacy_path}: {exc}")
+            continue
+        if dry_run:
+            print(f"   {sym('dry')}[dry-run] would convert {legacy_path} -> {yml_path}")
+        else:
+            save_config(alias, data)
+            backup = legacy_path + ".bak"
+            os.rename(legacy_path, backup)
+            print(f"{sym('check')}Converted '{alias}': {legacy_path} -> {yml_path} (backup: {backup})")
+        converted += 1
+
+    if converted == 0 and skipped == 0:
+        print(f"{sym('info')}No legacy JSON configs found under {CONFIG_DIR}; nothing to upgrade.")
+    elif dry_run:
+        print(f"\n{sym('info')}Dry run: {converted} would be converted, {skipped} would be skipped.")
+    else:
+        print(f"\n{sym('sparkle')}Upgrade complete: {converted} converted, {skipped} skipped.")
+
+
 EPILOG = """\
 examples:
   manage-workspace.py list
@@ -681,22 +789,24 @@ examples:
   manage-workspace.py edit myapp --raw
   manage-workspace.py validate myapp
   manage-workspace.py config
+  manage-workspace.py upgrade
+  manage-workspace.py upgrade --dry-run
 """
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Centralized JSON-Driven TMUX Workspace Manager",
+        description="Centralized YAML-Driven TMUX Workspace Manager",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "action",
-        choices=["up", "down", "list", "create", "edit", "validate", "config"],
+        choices=["up", "down", "list", "create", "edit", "validate", "config", "upgrade"],
         help="Workspace lifecycle command",
     )
     parser.add_argument("project", nargs="?", default=None, help="The short alias profile filename string")
-    parser.add_argument("--raw", action="store_true", help="Open raw JSON instead of the wizard menu (edit)")
-    parser.add_argument("--dry-run", action="store_true", help="Print the tmux/teardown commands without executing them (up/down)")
+    parser.add_argument("--raw", action="store_true", help="Open raw YAML instead of the wizard menu (edit)")
+    parser.add_argument("--dry-run", action="store_true", help="Print the tmux/teardown commands without executing them (up/down/upgrade)")
     parser.add_argument("-y", "--yes", action="store_true", help="Skip the confirmation prompt (down)")
     parser.add_argument("--no-emoji", action="store_true", help="Disable emoji in output")
     args = parser.parse_args()
@@ -711,6 +821,8 @@ if __name__ == "__main__":
         create_workspace_wizard(args.project)
     elif args.action == "config":
         edit_settings()
+    elif args.action == "upgrade":
+        upgrade_configs(dry_run=args.dry_run)
     elif args.action == "list" or (args.action in ["up", "down", "edit", "validate"] and not args.project):
         list_workspaces()
     elif args.action == "edit":

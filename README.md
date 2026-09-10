@@ -1,13 +1,13 @@
 # tmux-workspace
 
-A small JSON-driven tmux session manager. Define a project's windows, panes,
+A small YAML-driven tmux session manager. Define a project's windows, panes,
 startup commands, and teardown steps once; then bring the whole workspace up
 or down with a single command.
 
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/scottdsnr/tmux-workspace-manager/refs/heads/master/install.sh| bash
+curl -fsSL https://raw.githubusercontent.com/scottdsnr/tmux-workspace-manager/master/install.sh | bash
 ```
 
 This downloads `manage-workspace.py` to `~/.local/bin/tmux-workspace` and makes
@@ -17,7 +17,8 @@ if you'd like to see exactly what it does.
 If `~/.local/bin` isn't already on your `PATH`, the installer will tell you
 what to add to your shell profile.
 
-**Requirements:** `python3` and `tmux`.
+**Requirements:** `python3`, [`PyYAML`](https://pypi.org/project/PyYAML/)
+(`pip install pyyaml`, or your distro's `python-yaml` package), and `tmux`.
 
 **Manual install:** copy `manage-workspace.py` anywhere on your `PATH` and
 `chmod +x` it. Everything below assumes the command is called
@@ -38,45 +39,41 @@ tmux-workspace list               # show all profiles and which are running
 | Command                       | Description                                                        |
 |--------------------------------|---------------------------------------------------------------------|
 | `list`                          | List all profiles and whether each has a running session.          |
-| `create [alias]`                | Interactive wizard that writes a new `<alias>.json` profile.        |
+| `create [alias]`                | Interactive wizard that writes a new `<alias>.yml` profile.         |
 | `up <alias>`                    | Build (or attach to) the tmux session for a profile.                |
 | `up <alias> --dry-run`          | Print the tmux/teardown commands without running them.              |
 | `down <alias>`                  | Gracefully stop panes, run teardown, then kill the session.         |
 | `down <alias> -y`               | Same, without the confirmation prompt.                              |
 | `down <alias> --dry-run`        | Preview what `down` would do without touching the session.          |
 | `edit <alias>`                  | Interactive wizard to modify an existing profile.                   |
-| `edit <alias> --raw`            | Open the profile's JSON directly in `$EDITOR`.                      |
-| `validate <alias>`              | Check a profile's JSON for structural problems.                     |
+| `edit <alias> --raw`            | Open the profile's YAML directly in `$EDITOR`.                      |
+| `validate <alias>`              | Check a profile's YAML for structural problems.                     |
 | `config`                        | Open (creating if needed) the global settings file in `$EDITOR`.    |
+| `upgrade`                       | Convert legacy `.json` profiles/settings to `.yml` in place.        |
+| `upgrade --dry-run`             | Preview what `upgrade` would convert without changing anything.     |
 
 Run `tmux-workspace --help` for the full flag list, including `--no-emoji`.
 
 ## Profiles
 
-Profiles live in `~/.config/tmux-workspaces/<alias>.json`. Each one describes
+Profiles live in `~/.config/tmux-workspaces/<alias>.yml`. Each one describes
 a tmux session named after its alias:
 
-```json
-{
-  "project_name_display": "Tabs",
-  "project_path": "~/code/tabs",
-  "windows": [
-    {
-      "name": "AI",
-      "panes": [{ "command": "claude" }],
-      "on_stop": "/exit"
-    },
-    {
-      "name": "Docker-Dev",
-      "path": "docker",
-      "panes": [
-        { "command": "./vendor/bin/sail up -d" },
-        { "command": "" }
-      ]
-    }
-  ],
-  "teardown": ["./vendor/bin/sail down"]
-}
+```yaml
+project_name_display: Tabs
+project_path: ~/code/tabs
+windows:
+  - name: AI
+    panes:
+      - command: claude
+    on_stop: /exit
+  - name: Docker-Dev
+    path: docker
+    panes:
+      - command: ./vendor/bin/sail up -d
+      - command: ""
+teardown:
+  - ./vendor/bin/sail down
 ```
 
 - **`project_path`** — the project's working directory. Relative paths are
@@ -85,7 +82,7 @@ a tmux session named after its alias:
 - **`windows`** — created in order; each pane after the first splits the
   window horizontally.
   - **`name`** — the tmux window name.
-  - **`panes`** — list of `{ "command": "..." }`. An empty `"command"` just
+  - **`panes`** — list of `{ command: "..." }`. An empty `command` just
     opens a plain shell.
   - **`path`** (optional) — working directory for this window only, relative
     to `project_path` (or absolute).
@@ -97,13 +94,31 @@ a tmux session named after its alias:
   panes are signaled to stop, before the session is killed. A single string
   is also accepted.
 
+### Migrating from JSON
+
+Older profiles written as `<alias>.json` (and `.settings/settings.json`) are
+still read automatically — valid JSON is valid YAML. Run:
+
+```sh
+tmux-workspace upgrade            # convert every legacy .json config to .yml
+tmux-workspace upgrade --dry-run  # preview what would be converted first
+```
+
+This converts every `<alias>.json` profile and the settings file to `.yml` in
+place, renaming each original to `<alias>.json.bak` (never deleted, so
+nothing is lost). It also cleans up a flat `settings.json` sitting directly
+in `~/.config/tmux-workspaces/` from older installs, moving it into
+`.settings/settings.yml` where the tool actually reads it — if you've had one
+sitting there unread, this is the fix. Already-converted aliases are skipped,
+so it's safe to run more than once.
+
 `down` sends Ctrl-C to every pane without an `on_stop` command, waits briefly,
 runs `teardown`, then kills the session. It never interrupts the pane you're
 currently attached in.
 
 ## Global settings
 
-`tmux-workspace config` opens `~/.config/tmux-workspaces/settings.json`,
+`tmux-workspace config` opens `~/.config/tmux-workspaces/.settings/settings.yml`,
 creating it with defaults on first use:
 
 | Key                  | Default   | Purpose                                                          |

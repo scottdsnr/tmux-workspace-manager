@@ -2,7 +2,7 @@
 # Installer for tmux-workspace.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/scotthellingsnm/tmux/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/scottdsnr/tmux-workspace-manager/master/install.sh | bash
 #
 # Environment overrides:
 #   TMUX_WORKSPACE_REF          git ref (branch/tag/commit) to install from  [default: master]
@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-REPO="scotthellingsnm/tmux"
+REPO="scottdsnr/tmux-workspace-manager"
 REF="${TMUX_WORKSPACE_REF:-master}"
 INSTALL_DIR="${TMUX_WORKSPACE_INSTALL_DIR:-$HOME/.local/bin}"
 BIN_NAME="${TMUX_WORKSPACE_BIN_NAME:-tmux-workspace}"
@@ -23,6 +23,7 @@ warn()  { printf 'warning: %s\n' "$1" >&2; }
 fail()  { printf 'error: %s\n' "$1" >&2; exit 1; }
 
 command -v python3 >/dev/null 2>&1 || fail "python3 is required but was not found on PATH."
+python3 -c "import yaml" >/dev/null 2>&1 || fail "PyYAML is required. Install it with 'pip install pyyaml' or your system's python-yaml package."
 
 if ! command -v tmux >/dev/null 2>&1; then
     warn "tmux was not found on PATH. Install it before using ${BIN_NAME}."
