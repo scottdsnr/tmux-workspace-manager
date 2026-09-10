@@ -66,42 +66,69 @@ func findConfigPath(alias string) string {
 }
 
 // loadConfigRaw loads a workspace profile as a generic map, for validation
-// and for edits that must preserve unrecognized top-level keys.
+// and for edits that must preserve unrecognized top-level keys. It aborts
+// the process on error, so it's only for plain CLI codepaths — a TUI
+// screen must use loadConfigRawErr instead.
 func loadConfigRaw(alias string) (map[string]interface{}, string) {
-	path := findConfigPath(alias)
-	if path == "" {
-		fatal("%sWorkspace alias '%s' does not exist.", sym("error"), alias)
-	}
-	data, err := os.ReadFile(path)
+	raw, err := loadConfigRawErr(alias)
 	if err != nil {
-		fatal("%sFailed to read %s: %v", sym("error"), path, err)
+		fatal("%s%s", sym("error"), err)
 	}
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		fatal("%sFailed to parse %s: %v", sym("error"), path, err)
-	}
-	if raw == nil {
-		raw = map[string]interface{}{}
+	path, _ := configPaths(alias)
+	if p := findConfigPath(alias); p != "" {
+		path = p
 	}
 	return raw, path
 }
 
-// loadConfigTyped loads a workspace profile into the strongly-typed Config,
-// for use once validateConfig has already confirmed the shape is sound.
-func loadConfigTyped(alias string) Config {
+// loadConfigRawErr is the non-fatal counterpart to loadConfigRaw, for
+// callers (TUI screens) that need to report failure themselves rather than
+// exiting the whole process.
+func loadConfigRawErr(alias string) (map[string]interface{}, error) {
 	path := findConfigPath(alias)
 	if path == "" {
-		fatal("%sWorkspace alias '%s' does not exist.", sym("error"), alias)
+		return nil, fmt.Errorf("workspace alias '%s' does not exist", alias)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fatal("%sFailed to read %s: %v", sym("error"), path, err)
+		return nil, fmt.Errorf("failed to read %s: %w", path, err)
+	}
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+	if raw == nil {
+		raw = map[string]interface{}{}
+	}
+	return raw, nil
+}
+
+// loadConfigTyped loads a workspace profile into the strongly-typed Config,
+// for use once validateConfig has already confirmed the shape is sound. It
+// aborts the process on error; TUI screens must use loadConfigTypedErr.
+func loadConfigTyped(alias string) Config {
+	cfg, err := loadConfigTypedErr(alias)
+	if err != nil {
+		fatal("%s%s", sym("error"), err)
+	}
+	return cfg
+}
+
+// loadConfigTypedErr is the non-fatal counterpart to loadConfigTyped.
+func loadConfigTypedErr(alias string) (Config, error) {
+	path := findConfigPath(alias)
+	if path == "" {
+		return Config{}, fmt.Errorf("workspace alias '%s' does not exist", alias)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		fatal("%sFailed to parse %s: %v", sym("error"), path, err)
+		return Config{}, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
-	return cfg
+	return cfg, nil
 }
 
 var topLevelOrder = []string{"project_name_display", "project_path", "windows", "teardown"}

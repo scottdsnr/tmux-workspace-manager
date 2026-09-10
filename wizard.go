@@ -37,11 +37,40 @@ func validateWorkspaceCmd(alias string) {
 	fmt.Printf("%s'%s' looks valid (%d window(s)).\n", sym("check"), alias, len(windows))
 }
 
-func listWorkspaces() {
+// workspaceEntry is a summarized workspace profile, used both by the plain
+// text `list` renderer and the dashboard TUI.
+type workspaceEntry struct {
+	alias, displayName string
+	active             bool
+	attached           bool // a client currently has the session open (only meaningful if active)
+	windowsAlive       int  // windows currently in the session (only meaningful if active)
+	windowsTotal       int  // windows defined in the profile (only meaningful if active)
+	hasError           bool
+	errMsg             string
+}
+
+// statusText renders a workspaceEntry's status for both the plain `list`
+// output and the dashboard: "inactive", or "ACTIVE (attached|detached, n/m
+// windows)" — the window count surfaces drift between what the profile
+// defines and what's actually running (one closed by hand, say).
+func statusText(e workspaceEntry) string {
+	if !e.active {
+		return "inactive"
+	}
+	state := "detached"
+	if e.attached {
+		state = "attached"
+	}
+	return fmt.Sprintf("ACTIVE (%s, %d/%d windows)", state, e.windowsAlive, e.windowsTotal)
+}
+
+// gatherWorkspaceEntries reads every profile under configDir and returns a
+// summary of each, sorted by alias. It performs no output side effects, so
+// it's safe to call from both the plain and TUI paths.
+func gatherWorkspaceEntries() []workspaceEntry {
 	entries, err := os.ReadDir(configDir)
 	if err != nil || len(entries) == 0 {
-		fmt.Printf("%sNo workspaces found. Create .yml profiles inside: %s\n", sym("info"), configDir)
-		return
+		return nil
 	}
 
 	aliases := map[string]string{} // alias -> filename
@@ -69,33 +98,38 @@ func listWorkspaces() {
 	}
 	sort.Strings(names)
 
-	type entry struct {
-		alias, displayName string
-		active             bool
-		hasError           bool
-		errMsg             string
-	}
-	var results []entry
-
+	var results []workspaceEntry
 	for _, alias := range names {
 		filename := aliases[alias]
 		data, err := os.ReadFile(filepath.Join(configDir, filename))
 		if err != nil {
-			results = append(results, entry{alias: alias, hasError: true, errMsg: err.Error()})
+			results = append(results, workspaceEntry{alias: alias, hasError: true, errMsg: err.Error()})
 			continue
 		}
 		var cfg map[string]interface{}
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			results = append(results, entry{alias: alias, hasError: true, errMsg: err.Error()})
+			results = append(results, workspaceEntry{alias: alias, hasError: true, errMsg: err.Error()})
 			continue
 		}
 		displayName := "Unnamed Project"
 		if dn, ok := cfg["project_name_display"].(string); ok && dn != "" {
 			displayName = dn
 		}
-		results = append(results, entry{alias: alias, displayName: displayName, active: hasSession(alias)})
+		entry := workspaceEntry{alias: alias, displayName: displayName, active: hasSession(alias)}
+		if entry.active {
+			entry.attached = sessionAttached(alias)
+			entry.windowsAlive = windowCount(alias)
+			if windows, ok := asInterfaceList(cfg["windows"]); ok {
+				entry.windowsTotal = len(windows)
+			}
+		}
+		results = append(results, entry)
 	}
+	return results
+}
 
+func listWorkspaces() {
+	results := gatherWorkspaceEntries()
 	if len(results) == 0 {
 		fmt.Printf("%sNo workspaces found. Create .yml profiles inside: %s\n", sym("info"), configDir)
 		return
@@ -119,10 +153,11 @@ func listWorkspaces() {
 			fmt.Printf("   %s%s | Error parsing json config: %s\n", sym("error"), padRight(r.alias, aliasW), r.errMsg)
 			continue
 		}
-		status := fmt.Sprintf("%sinactive", sym("inactive"))
+		glyph := sym("inactive")
 		if r.active {
-			status = fmt.Sprintf("%sACTIVE", sym("active"))
+			glyph = sym("active")
 		}
+		status := glyph + statusText(r)
 		fmt.Printf("   %s | %s | %s\n", padRight(r.alias, aliasW), padRight(r.displayName, nameW), status)
 	}
 	fmt.Println(strings.Repeat("-", aliasW+nameW+20))

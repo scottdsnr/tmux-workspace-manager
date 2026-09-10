@@ -8,33 +8,43 @@ import (
 	"time"
 )
 
-func startWorkspace(alias string, dry bool) {
+// reportFunc receives one human-readable progress line at a time. The plain
+// CLI path renders it with fmt.Println; the TUI progress screen sends it
+// over a channel as a log line.
+type reportFunc func(string)
+
+// runUp ensures the tmux session for alias exists (building every
+// window/pane if it doesn't), but never attaches — attaching takes over the
+// real terminal, which only the caller (plain fmt/exec, or the TUI's
+// tea.ExecProcess) is positioned to do safely.
+func runUp(alias string, dry bool, report reportFunc) error {
 	dryRun = dry
 
-	raw, _ := loadConfigRaw(alias)
-	if errs := validateConfig(raw); len(errs) > 0 {
-		errPrint("%sCannot start '%s' — invalid config:", sym("error"), alias)
-		for _, e := range errs {
-			errPrint("   - %s", e)
-		}
-		os.Exit(1)
+	raw, err := loadConfigRawErr(alias)
+	if err != nil {
+		return err
 	}
-	config := loadConfigTyped(alias)
+	if errs := validateConfig(raw); len(errs) > 0 {
+		return fmt.Errorf("invalid config:\n   - %s", strings.Join(errs, "\n   - "))
+	}
+	config, err := loadConfigTypedErr(alias)
+	if err != nil {
+		return err
+	}
 
 	projectDir := resolveProjectPath(config.ProjectPath, settings.BaseDir)
 	sessionName := alias
 
 	if hasSession(sessionName) {
-		fmt.Printf("%sWorkspace '%s' is already running. Attaching...\n", sym("wave"), sessionName)
-		tmuxAttach(sessionName)
-		return
+		report(fmt.Sprintf("%sWorkspace '%s' is already running.", sym("wave"), sessionName))
+		return nil
 	}
 
 	displayTitle := config.ProjectNameDisplay
 	if displayTitle == "" {
 		displayTitle = sessionName
 	}
-	fmt.Printf("%sBuilding '%s' workspace...\n", sym("rocket"), displayTitle)
+	report(fmt.Sprintf("%sBuilding '%s' workspace...", sym("rocket"), displayTitle))
 
 	windowsList := config.Windows
 	prevWinName := ""
@@ -42,7 +52,7 @@ func startWorkspace(alias string, dry bool) {
 	for winIdx, win := range windowsList {
 		winName := win.Name
 		winDir := resolveWindowDir(projectDir, win)
-		fmt.Printf("   %sWindow %d/%d: %s\n", sym("package"), winIdx+1, len(windowsList), winName)
+		report(fmt.Sprintf("   %sWindow %d/%d: %s", sym("package"), winIdx+1, len(windowsList), winName))
 
 		var currentPaneID string
 		if winIdx == 0 {
@@ -77,7 +87,7 @@ func startWorkspace(alias string, dry bool) {
 		prevWinName = winName
 	}
 
-	tmuxAttach(sessionName)
+	return nil
 }
 
 func minInt(a, b int) int {
@@ -87,69 +97,78 @@ func minInt(a, b int) int {
 	return b
 }
 
-func runTeardown(commands []string, projectDir string, dry bool) {
+// runTeardown runs each teardown command in projectDir. When attachTTY is
+// true (the plain CLI path), commands get the real terminal, matching
+// today's behavior. When false (running inside the TUI, which owns the
+// terminal for its own rendering), output is captured and reported as log
+// lines instead — teardown commands lose interactive stdin in that case,
+// which is the right trade-off for commands that are meant to run
+// unattended during a "down".
+func runTeardown(commands []string, projectDir string, dry, attachTTY bool, report reportFunc) {
 	if len(commands) == 0 {
 		return
 	}
 
-	fmt.Printf("%sRunning teardown commands...\n", sym("broom"))
+	report(fmt.Sprintf("%sRunning teardown commands...", sym("broom")))
 	for _, cmd := range commands {
 		if cmd == "" {
 			continue
 		}
 		if dry {
-			fmt.Printf("   %s[dry-run] would run: %s\n", sym("dry"), cmd)
+			report(fmt.Sprintf("   %s[dry-run] would run: %s", sym("dry"), cmd))
 			continue
 		}
-		fmt.Printf(" -> %s\n", cmd)
+		report(fmt.Sprintf(" -> %s", cmd))
 		c := exec.Command("sh", "-c", cmd)
 		c.Dir = projectDir
-		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
-		err := c.Run()
-		if err != nil {
-			if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() != 0 {
-				fmt.Printf("    %sExited with code %d\n", sym("warn"), ee.ExitCode())
+
+		var runErr error
+		if attachTTY {
+			c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+			runErr = c.Run()
+		} else {
+			out, err := c.CombinedOutput()
+			for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+				if line != "" {
+					report("    " + line)
+				}
 			}
+			runErr = err
+		}
+		if ee, ok := runErr.(*exec.ExitError); ok && ee.ExitCode() != 0 {
+			report(fmt.Sprintf("    %sExited with code %d", sym("warn"), ee.ExitCode()))
 		}
 	}
-	fmt.Println(" -> Teardown complete.")
+	report(" -> Teardown complete.")
 }
 
-func stopWorkspace(alias string, dry bool, assumeYes bool) {
+// runDown signals every pane to stop, runs teardown, then kills the
+// session. Like runUp, it never prompts — confirmation is a UI decision the
+// caller makes before calling this.
+func runDown(alias string, dry, attachTTY bool, report reportFunc) error {
 	dryRun = dry
 
-	raw, _ := loadConfigRaw(alias)
-	if errs := validateConfig(raw); len(errs) > 0 {
-		errPrint("%sCannot stop '%s' — invalid config:", sym("error"), alias)
-		for _, e := range errs {
-			errPrint("   - %s", e)
-		}
-		os.Exit(1)
+	raw, err := loadConfigRawErr(alias)
+	if err != nil {
+		return err
 	}
-	config := loadConfigTyped(alias)
+	if errs := validateConfig(raw); len(errs) > 0 {
+		return fmt.Errorf("invalid config:\n   - %s", strings.Join(errs, "\n   - "))
+	}
+	config, err := loadConfigTypedErr(alias)
+	if err != nil {
+		return err
+	}
 
 	projectDir := resolveProjectPath(config.ProjectPath, settings.BaseDir)
 	sessionName := alias
 
 	if !hasSession(sessionName) {
-		fmt.Printf("%sNo active session found for alias '%s'\n", sym("info"), sessionName)
-		return
+		report(fmt.Sprintf("%sNo active session found for alias '%s'", sym("info"), sessionName))
+		return nil
 	}
 
-	if !dry && !assumeYes && settings.ConfirmDown {
-		displayTitle := config.ProjectNameDisplay
-		if displayTitle == "" {
-			displayTitle = sessionName
-		}
-		answer := prompt(fmt.Sprintf("%sTear down '%s' (%s)? This runs teardown commands and kills the session. (y/N): ",
-			sym("warn"), displayTitle, sessionName))
-		if strings.ToLower(answer) != "y" {
-			fmt.Println("Cancelled.")
-			return
-		}
-	}
-
-	fmt.Printf("%sSafely bringing down workspace: %s...\n", sym("stop"), sessionName)
+	report(fmt.Sprintf("%sSafely bringing down workspace: %s...", sym("stop"), sessionName))
 
 	selfPane := os.Getenv("TMUX_PANE")
 
@@ -175,9 +194,72 @@ func stopWorkspace(alias string, dry bool, assumeYes bool) {
 		time.Sleep(500 * time.Millisecond) // give Ctrl-C / exit commands a moment to land before teardown runs
 	}
 
-	runTeardown(config.Teardown, projectDir, dry)
+	runTeardown(config.Teardown, projectDir, dry, attachTTY, report)
 
-	fmt.Printf("   %sCleaning environment allocations...\n", sym("broom"))
+	report(fmt.Sprintf("   %sCleaning environment allocations...", sym("broom")))
 	tmuxKillSession(sessionName)
-	fmt.Printf("%sCompleted clean exit!\n", sym("check"))
+	report(fmt.Sprintf("%sCompleted clean exit!", sym("check")))
+	return nil
+}
+
+// attachWorkspace jumps straight into an already-running workspace's tmux
+// session, skipping the build step (and, in the TUI, its progress screen)
+// entirely. tmuxAttach itself picks attach-session vs. switch-client.
+func attachWorkspace(alias string) {
+	if !hasSession(alias) {
+		fmt.Printf("%sNo active session found for alias '%s'\n", sym("info"), alias)
+		return
+	}
+	tmuxAttach(alias)
+}
+
+// startWorkspace is the plain-text CLI path: build (if needed) and attach,
+// printing progress directly rather than through a TUI.
+func startWorkspace(alias string, dry bool) {
+	err := runUp(alias, dry, func(line string) { fmt.Println(line) })
+	if err != nil {
+		errPrint("%sCannot start '%s' — %v", sym("error"), alias, err)
+		os.Exit(1)
+	}
+	tmuxAttach(alias)
+}
+
+// stopWorkspace is the plain-text CLI path: confirm (unless skipped), then
+// tear down, printing progress directly.
+func stopWorkspace(alias string, dry bool, assumeYes bool) {
+	raw, err := loadConfigRawErr(alias)
+	if err != nil {
+		fatal("%s%s", sym("error"), err)
+	}
+	if errs := validateConfig(raw); len(errs) > 0 {
+		errPrint("%sCannot stop '%s' — invalid config:", sym("error"), alias)
+		for _, e := range errs {
+			errPrint("   - %s", e)
+		}
+		os.Exit(1)
+	}
+
+	if !hasSession(alias) {
+		fmt.Printf("%sNo active session found for alias '%s'\n", sym("info"), alias)
+		return
+	}
+
+	if !dry && !assumeYes && settings.ConfirmDown {
+		config, _ := loadConfigTypedErr(alias)
+		displayTitle := config.ProjectNameDisplay
+		if displayTitle == "" {
+			displayTitle = alias
+		}
+		answer := prompt(fmt.Sprintf("%sTear down '%s' (%s)? This runs teardown commands and kills the session. (y/N): ",
+			sym("warn"), displayTitle, alias))
+		if strings.ToLower(answer) != "y" {
+			fmt.Println("Cancelled.")
+			return
+		}
+	}
+
+	if err := runDown(alias, dry, true, func(line string) { fmt.Println(line) }); err != nil {
+		errPrint("%sCannot stop '%s' — %v", sym("error"), alias, err)
+		os.Exit(1)
+	}
 }

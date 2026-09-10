@@ -74,7 +74,9 @@ func parseArgs(args []string) (*cliArgs, error) {
 	}
 
 	if len(positionals) == 0 {
-		return nil, fmt.Errorf("the following arguments are required: action")
+		// Bare invocation: main() decides (dashboard on a TTY, usage error
+		// otherwise) rather than erroring here.
+		return res, nil
 	}
 	res.action = positionals[0]
 	if !isValidAction(res.action) {
@@ -95,8 +97,10 @@ func progName() string {
 
 func printUsage(w *os.File) {
 	fmt.Fprintf(w, "usage: %s [-h] [--raw] [--dry-run] [-y] [--no-emoji]\n", progName())
-	fmt.Fprintf(w, "%s{%s} [project]\n\n", strings.Repeat(" ", len(progName())+8), strings.Join(validActions, ","))
+	fmt.Fprintf(w, "%s[{%s}] [project]\n\n", strings.Repeat(" ", len(progName())+8), strings.Join(validActions, ","))
 	fmt.Fprintln(w, "Centralized YAML-Driven TMUX Workspace Manager")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run with no arguments on a terminal to open the interactive dashboard.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "positional arguments:")
 	fmt.Fprintf(w, "  {%s}\n", strings.Join(validActions, ","))
@@ -106,7 +110,8 @@ func printUsage(w *os.File) {
 	fmt.Fprintln(w, "options:")
 	fmt.Fprintln(w, "  -h, --help            show this help message and exit")
 	fmt.Fprintln(w, "  -v, --version         show the installed version and exit")
-	fmt.Fprintln(w, "  --raw                 Open raw YAML instead of the wizard menu (edit)")
+	fmt.Fprintln(w, "  --raw                 Open $EDITOR directly instead of the interactive")
+	fmt.Fprintln(w, "                        wizard/form (edit, config)")
 	fmt.Fprintln(w, "  --dry-run             Print the tmux/teardown commands without executing them")
 	fmt.Fprintln(w, "                        (up/down/upgrade)")
 	fmt.Fprintln(w, "  -y, --yes             Skip the confirmation prompt (down)")
@@ -151,39 +156,82 @@ func main() {
 		settings.UseEmoji = false
 	}
 
+	// dashboardOrList is the shared fallback for any command that names no
+	// alias: open the interactive dashboard on a TTY, else the plain list.
+	dashboardOrList := func() {
+		if interactive() {
+			runDashboardTUI()
+		} else {
+			listWorkspaces()
+		}
+	}
+
 	switch args.action {
+	case "":
+		if interactive() {
+			runDashboardTUI()
+		} else {
+			printUsage(os.Stderr)
+			fmt.Fprintf(os.Stderr, "\n%s: error: the following arguments are required: action\n", progName())
+			os.Exit(2)
+		}
 	case "create":
-		createWorkspaceWizard(args.project)
+		if !interactive() {
+			createWorkspaceWizard(args.project)
+		} else {
+			runWizardTUI(true, args.project)
+		}
 	case "config":
-		editSettings()
+		if args.raw || !interactive() {
+			editSettings()
+		} else {
+			runSettingsTUI()
+		}
 	case "upgrade":
 		upgradeConfigs(args.dryRun)
 	case "list":
-		listWorkspaces()
+		dashboardOrList()
 	case "up":
-		if args.project == "" {
-			listWorkspaces()
-		} else {
+		switch {
+		case args.project == "":
+			dashboardOrList()
+		case args.dryRun || !interactive():
 			startWorkspace(args.project, args.dryRun)
+		case hasSession(args.project):
+			// Already running: skip the build/progress screen and jump
+			// straight into it (attach, or switch-client if we're already
+			// inside tmux).
+			attachWorkspace(args.project)
+		default:
+			runUpTUI(args.project)
 		}
 	case "down":
-		if args.project == "" {
-			listWorkspaces()
-		} else {
+		switch {
+		case args.project == "":
+			dashboardOrList()
+		case args.dryRun || !interactive():
 			stopWorkspace(args.project, args.dryRun, args.yes)
+		default:
+			runDownTUI(args.project, args.yes)
 		}
 	case "edit":
-		if args.project == "" {
-			listWorkspaces()
-		} else if args.raw {
+		switch {
+		case args.project == "":
+			dashboardOrList()
+		case args.raw:
 			editWorkspaceRaw(args.project)
-		} else {
+		case interactive():
+			runWizardTUI(false, args.project)
+		default:
 			editWorkspaceInteractive(args.project)
 		}
 	case "validate":
-		if args.project == "" {
-			listWorkspaces()
-		} else {
+		switch {
+		case args.project == "":
+			dashboardOrList()
+		case interactive():
+			printValidateResult(args.project)
+		default:
 			validateWorkspaceCmd(args.project)
 		}
 	}

@@ -34,19 +34,29 @@ repo and run `go build -o tmux-workspace .`.
 
 ## Quick start
 
+Run `tmux-workspace` with no arguments in a terminal to open the interactive
+dashboard: browse profiles, bring one up or down, create/edit a profile, and
+edit settings, all without leaving the TUI.
+
 ```sh
+tmux-workspace                    # interactive dashboard
 tmux-workspace create myproject   # interactive wizard, writes a profile
 tmux-workspace up myproject       # builds the tmux session and attaches
 tmux-workspace down myproject     # runs teardown, then kills the session
 tmux-workspace list               # show all profiles and which are running
 ```
 
+Every command above also works non-interactively — piped, redirected, or run
+with `--dry-run` — for scripting and CI, falling back to plain text output
+with no TUI involved.
+
 ## Commands
 
 | Command                       | Description                                                        |
 |--------------------------------|---------------------------------------------------------------------|
-| `list`                          | List all profiles and whether each has a running session.          |
-| `create [alias]`                | Interactive wizard that writes a new `<alias>.yml` profile.         |
+| *(no arguments)*                | Open the interactive dashboard (a TTY); plain usage otherwise.     |
+| `list`                          | Dashboard on a TTY; plain list of profiles and status otherwise.   |
+| `create [alias]`                | Interactive wizard (or piped-stdin wizard) that writes a new `<alias>.yml` profile. |
 | `up <alias>`                    | Build (or attach to) the tmux session for a profile.                |
 | `up <alias> --dry-run`          | Print the tmux/teardown commands without running them.              |
 | `down <alias>`                  | Gracefully stop panes, run teardown, then kill the session.         |
@@ -55,7 +65,7 @@ tmux-workspace list               # show all profiles and which are running
 | `edit <alias>`                  | Interactive wizard to modify an existing profile.                   |
 | `edit <alias> --raw`            | Open the profile's YAML directly in `$EDITOR`.                      |
 | `validate <alias>`              | Check a profile's YAML for structural problems.                     |
-| `config`                        | Open (creating if needed) the global settings file in `$EDITOR`.    |
+| `config`                        | Interactive settings form on a TTY; opens `$EDITOR` otherwise (or with `--raw`). |
 | `upgrade`                       | Convert legacy `.json` profiles/settings to `.yml` in place.        |
 | `upgrade --dry-run`             | Preview what `upgrade` would convert without changing anything.     |
 

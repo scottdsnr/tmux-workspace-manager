@@ -69,6 +69,20 @@ func loadSettings() Settings {
 	return result
 }
 
+// saveSettings writes s to settingsPath, creating its directory if needed.
+// Used by the in-TUI settings form; editSettings (below) is the $EDITOR
+// fallback for the non-TTY / --raw path.
+func saveSettings(s Settings) error {
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return err
+	}
+	data, err := yaml.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(settingsPath, data, 0644)
+}
+
 func editSettings() {
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
 		fatal("%sFailed to create %s: %v", sym("error"), filepath.Dir(settingsPath), err)
