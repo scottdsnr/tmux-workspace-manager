@@ -4,11 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 )
 
-// version is overwritten at build time via -ldflags "-X main.version=...".
+// version is overwritten at build time via -ldflags "-X main.version=..."
+// for release builds. For `go install pkg@version`, which doesn't apply
+// custom ldflags, fall back to the module version Go itself embeds.
 var version = "dev"
+
+func init() {
+	if version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		}
+	}
+}
 
 var validActions = []string{"up", "down", "list", "create", "edit", "validate", "config", "upgrade"}
 
