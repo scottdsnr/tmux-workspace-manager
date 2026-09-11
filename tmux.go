@@ -123,6 +123,14 @@ func tmuxRenumberWindows(session string) {
 	tmuxRun([]string{"tmux", "move-window", "-r", "-t", session})
 }
 
+// tmuxSelectLayout applies a layout (a preset name like "tiled", or a
+// literal tmux layout string) to every pane in target ("session:window").
+// Run after all of a window's panes have been created, since layouts are a
+// pane-count-dependent arrangement.
+func tmuxSelectLayout(target, layout string) {
+	tmuxRun([]string{"tmux", "select-layout", "-t", target, layout})
+}
+
 func tmuxKillSession(session string) {
 	tmuxRun([]string{"tmux", "kill-session", "-t", session})
 }

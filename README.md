@@ -105,6 +105,16 @@ windows:
     panes:
       - command: ./vendor/bin/sail up -d
       - command: ""
+  - name: App
+    layout: main-vertical
+    panes:
+      - command: npm run dev
+        path: frontend
+        env:
+          NODE_ENV: development
+          PORT: "3000"
+      - command: tail -f storage/logs/laravel.log
+        path: backend
 teardown:
   - ./vendor/bin/sail down
 ```
@@ -113,16 +123,27 @@ teardown:
   resolved against the `base_dir` setting (see below), not the directory
   `tmux-workspace` was run from.
 - **`windows`** — created in order; each pane after the first splits the
-  window horizontally.
+  window horizontally, then `layout` (if set) rearranges all of them.
   - **`name`** — the tmux window name.
-  - **`panes`** — list of `{ command: "..." }`. An empty `command` just
-    opens a plain shell.
   - **`path`** (optional) — working directory for this window only, relative
     to `project_path` (or absolute).
+  - **`layout`** (optional) — applied via `tmux select-layout` once every
+    pane in the window exists. Accepts tmux's built-in presets
+    (`even-horizontal`, `even-vertical`, `main-horizontal`, `main-vertical`,
+    `tiled`) or a literal tmux layout string (e.g. one copied from
+    `tmux list-windows -F '#{window_layout}'`).
   - **`on_stop`** (optional) — a command sent to the window's first pane
     instead of Ctrl-C when running `down`. Use this for anything that needs a
     graceful exit (e.g. `/exit` for a Claude Code session, `:q` for an editor
     pane you don't want interrupted).
+  - **`panes`** — list of pane definitions.
+    - **`command`** — command to run in the pane. An empty `command` just
+      opens a plain shell.
+    - **`path`** (optional) — working directory for this pane only, relative
+      to the window's `path` (or absolute). Overrides the window's directory
+      for just this one pane.
+    - **`env`** (optional) — map of environment variables exported in the
+      pane before `command` runs (e.g. `NODE_ENV: development`).
 - **`teardown`** — commands run (and waited on) in `project_path` after
   panes are signaled to stop, before the session is killed. A single string
   is also accepted.

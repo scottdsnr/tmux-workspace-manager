@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -54,13 +55,19 @@ func runUp(alias string, dry bool, report reportFunc) error {
 		winDir := resolveWindowDir(projectDir, win)
 		report(fmt.Sprintf("   %sWindow %d/%d: %s", sym("package"), winIdx+1, len(windowsList), winName))
 
+		panes := win.Panes
+		firstPaneDir := winDir
+		if len(panes) > 0 {
+			firstPaneDir = resolvePaneDir(winDir, panes[0])
+		}
+
 		var currentPaneID string
 		if winIdx == 0 {
-			currentPaneID = tmuxNewSession(sessionName, winName, winDir)
+			currentPaneID = tmuxNewSession(sessionName, winName, firstPaneDir)
 			tmuxSetOption(sessionName, "base-index", settings.WindowBaseIndex, false)
 			tmuxRenumberWindows(sessionName)
 		} else {
-			currentPaneID = tmuxNewWindow(sessionName, prevWinName, winName, winDir)
+			currentPaneID = tmuxNewWindow(sessionName, prevWinName, winName, firstPaneDir)
 		}
 
 		// pane-base-index is a per-window option: "-w -t session" only ever
@@ -68,20 +75,18 @@ func runUp(alias string, dry bool, report reportFunc) error {
 		// explicitly per window, right after each one is created.
 		tmuxSetOption(sessionName+":"+winName, "pane-base-index", settings.PaneBaseIndex, true)
 
-		panes := win.Panes
-		firstCmd := ""
 		if len(panes) > 0 {
-			firstCmd = panes[0].Command
-		}
-		if firstCmd != "" {
-			tmuxSendKeys(currentPaneID, firstCmd)
+			sendPaneCommand(currentPaneID, panes[0])
 		}
 
 		for _, pane := range panes[minInt(1, len(panes)):] {
-			currentPaneID = tmuxSplitWindow(currentPaneID, winDir)
-			if pane.Command != "" {
-				tmuxSendKeys(currentPaneID, pane.Command)
-			}
+			paneDir := resolvePaneDir(winDir, pane)
+			currentPaneID = tmuxSplitWindow(currentPaneID, paneDir)
+			sendPaneCommand(currentPaneID, pane)
+		}
+
+		if win.Layout != "" {
+			tmuxSelectLayout(sessionName+":"+winName, win.Layout)
 		}
 
 		prevWinName = winName
@@ -95,6 +100,38 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// sendPaneCommand sends a pane's env assignments (if any) and command to
+// paneID as a single line, so the exports are visible to the command.
+func sendPaneCommand(paneID string, pane Pane) {
+	if cmd := buildPaneCommand(pane); cmd != "" {
+		tmuxSendKeys(paneID, cmd)
+	}
+}
+
+// buildPaneCommand combines a pane's env vars and command into the single
+// shell line send-keys should type. Env vars are sorted for deterministic
+// output (useful for --dry-run and tests).
+func buildPaneCommand(pane Pane) string {
+	if len(pane.Env) == 0 {
+		return pane.Command
+	}
+	keys := make([]string, 0, len(pane.Env))
+	for k := range pane.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	b.WriteString("export")
+	for _, k := range keys {
+		b.WriteString(" " + k + "=" + shellQuote(pane.Env[k]))
+	}
+	if pane.Command != "" {
+		b.WriteString(" && " + pane.Command)
+	}
+	return b.String()
 }
 
 // runTeardown runs each teardown command in projectDir. When attachTTY is

@@ -10,13 +10,16 @@ import (
 )
 
 type Pane struct {
-	Command string `yaml:"command"`
+	Command string            `yaml:"command"`
+	Path    string            `yaml:"path,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty"`
 }
 
 type Window struct {
 	Name   string `yaml:"name"`
 	Path   string `yaml:"path,omitempty"`
 	OnStop string `yaml:"on_stop,omitempty"`
+	Layout string `yaml:"layout,omitempty"`
 	Panes  []Pane `yaml:"panes"`
 }
 
@@ -213,6 +216,7 @@ func validateConfig(cfg map[string]interface{}) []string {
 	if !hasWindows || !isList || len(windows) == 0 {
 		errs = append(errs, "windows must be a non-empty list")
 	} else {
+		seenNames := make(map[string]bool, len(windows))
 		for i, wRaw := range windows {
 			w, isMap := wRaw.(map[string]interface{})
 			name, hasName := "", false
@@ -226,6 +230,18 @@ func validateConfig(cfg map[string]interface{}) []string {
 				errs = append(errs, fmt.Sprintf("window #%d is missing a 'name'", i+1))
 				continue
 			}
+			// tmux targets windows by "session:name" (see tmuxNewWindow,
+			// listPaneIDs) — a duplicate name makes that target ambiguous.
+			if seenNames[name] {
+				errs = append(errs, fmt.Sprintf("window name '%s' is used more than once", name))
+			}
+			seenNames[name] = true
+
+			if layoutRaw, hasLayout := w["layout"]; hasLayout {
+				if _, ok := layoutRaw.(string); !ok {
+					errs = append(errs, fmt.Sprintf("window '%s' layout must be a string", name))
+				}
+			}
 
 			panesRaw := w["panes"]
 			panes, panesIsList := asInterfaceList(panesRaw)
@@ -236,9 +252,20 @@ func validateConfig(cfg map[string]interface{}) []string {
 				errs = append(errs, fmt.Sprintf("window '%s' must have at least one pane", name))
 			} else {
 				for _, p := range panes {
-					if _, ok := p.(map[string]interface{}); !ok {
+					pm, ok := p.(map[string]interface{})
+					if !ok {
 						errs = append(errs, fmt.Sprintf("window '%s' has a pane that is not an object", name))
 						break
+					}
+					if pathRaw, hasPath := pm["path"]; hasPath {
+						if _, ok := pathRaw.(string); !ok {
+							errs = append(errs, fmt.Sprintf("window '%s' has a pane with a non-string 'path'", name))
+						}
+					}
+					if envRaw, hasEnv := pm["env"]; hasEnv {
+						if !isStringMap(envRaw) {
+							errs = append(errs, fmt.Sprintf("window '%s' has a pane whose 'env' is not a map of strings", name))
+						}
 					}
 				}
 			}
@@ -283,11 +310,16 @@ func validateTypedConfig(projectPath string, windows []Window) []string {
 	if len(windows) == 0 {
 		errs = append(errs, "windows must be a non-empty list")
 	} else {
+		seenNames := make(map[string]bool, len(windows))
 		for i, w := range windows {
 			if w.Name == "" {
 				errs = append(errs, fmt.Sprintf("window #%d is missing a 'name'", i+1))
 				continue
 			}
+			if seenNames[w.Name] {
+				errs = append(errs, fmt.Sprintf("window name '%s' is used more than once", w.Name))
+			}
+			seenNames[w.Name] = true
 			if len(w.Panes) == 0 {
 				errs = append(errs, fmt.Sprintf("window '%s' must have at least one pane", w.Name))
 			}
@@ -300,6 +332,21 @@ func validateTypedConfig(projectPath string, windows []Window) []string {
 func asInterfaceList(v interface{}) ([]interface{}, bool) {
 	list, ok := v.([]interface{})
 	return list, ok
+}
+
+// isStringMap reports whether v decoded (via yaml.v3) as a mapping whose
+// values are all strings — the shape a pane's "env" field must have.
+func isStringMap(v interface{}) bool {
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	for _, val := range m {
+		if _, ok := val.(string); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // validateAlias returns an error string if alias is unusable as a workspace

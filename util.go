@@ -59,15 +59,29 @@ func resolveProjectPath(rawPath, baseDir string) string {
 	return resolvePath(filepath.Join(expandUser(baseDir), expanded))
 }
 
-func resolveWindowDir(projectDir string, win Window) string {
-	if win.Path == "" {
-		return projectDir
+// resolveRelativeDir resolves path against base: an empty path yields base
+// as-is, an absolute or "~"-path is used on its own (after expansion),
+// otherwise it's joined onto base.
+func resolveRelativeDir(base, path string) string {
+	if path == "" {
+		return base
 	}
-	expanded := expandUser(win.Path)
+	expanded := expandUser(path)
 	if filepath.IsAbs(expanded) {
 		return resolvePath(expanded)
 	}
-	return resolvePath(filepath.Join(projectDir, expanded))
+	return resolvePath(filepath.Join(base, expanded))
+}
+
+func resolveWindowDir(projectDir string, win Window) string {
+	return resolveRelativeDir(projectDir, win.Path)
+}
+
+// resolvePaneDir resolves a pane's optional path override against its
+// window's directory, the same way resolveWindowDir resolves a window's
+// path against the project directory.
+func resolvePaneDir(windowDir string, pane Pane) string {
+	return resolveRelativeDir(windowDir, pane.Path)
 }
 
 // shlexSplit is a small approximation of Python's shlex.split, sufficient

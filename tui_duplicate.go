@@ -51,6 +51,10 @@ func (m *duplicateModel) Update(msg tea.Msg) (*duplicateModel, tea.Cmd) {
 				m.err = err.Error()
 				return m, nil
 			}
+			if errs := validateConfig(raw); len(errs) > 0 {
+				m.err = fmt.Sprintf("'%s' has %d problem(s); fix it before duplicating", m.source, len(errs))
+				return m, nil
+			}
 			if _, err := saveConfigRaw(alias, raw); err != nil {
 				m.err = "failed to save: " + err.Error()
 				return m, nil
