@@ -68,8 +68,24 @@ with no TUI involved.
 | `config`                        | Interactive settings form on a TTY; opens `$EDITOR` otherwise (or with `--raw`). |
 | `upgrade`                       | Convert legacy `.json` profiles/settings to `.yml` in place.        |
 | `upgrade --dry-run`             | Preview what `upgrade` would convert without changing anything.     |
+| `update`                        | Check GitHub for a newer release and install it in place.           |
+| `update --dry-run`              | Check for a newer release without installing it.                    |
 
 Run `tmux-workspace --help` for the full flag list, including `--no-emoji`.
+
+## Updating
+
+```sh
+tmux-workspace update
+```
+
+Checks the latest GitHub release, and if it's newer than the running binary,
+downloads it, verifies its checksum, and replaces the current executable in
+place — no need to re-run the installer or remember its URL. Pass `-y` to
+skip the confirmation prompt (handy for scripting), or `--dry-run` to just
+see whether an update is available. Only Linux and macOS on amd64/arm64 have
+prebuilt binaries; a `go install`-built binary should instead be updated by
+re-running `go install github.com/scottdsnr/tmux-workspace-manager@latest`.
 
 ## Profiles
 

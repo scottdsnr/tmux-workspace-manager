@@ -21,7 +21,7 @@ func init() {
 	}
 }
 
-var validActions = []string{"up", "down", "list", "create", "edit", "validate", "config", "upgrade"}
+var validActions = []string{"up", "down", "list", "create", "edit", "validate", "config", "upgrade", "update"}
 
 type cliArgs struct {
 	action  string
@@ -113,8 +113,8 @@ func printUsage(w *os.File) {
 	fmt.Fprintln(w, "  --raw                 Open $EDITOR directly instead of the interactive")
 	fmt.Fprintln(w, "                        wizard/form (edit, config)")
 	fmt.Fprintln(w, "  --dry-run             Print the tmux/teardown commands without executing them")
-	fmt.Fprintln(w, "                        (up/down/upgrade)")
-	fmt.Fprintln(w, "  -y, --yes             Skip the confirmation prompt (down)")
+	fmt.Fprintln(w, "                        (up/down/upgrade/update)")
+	fmt.Fprintln(w, "  -y, --yes             Skip the confirmation prompt (down/update)")
 	fmt.Fprintln(w, "  --no-emoji            Disable emoji in output")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "examples:")
@@ -130,6 +130,7 @@ func printUsage(w *os.File) {
 	fmt.Fprintf(w, "  %s config\n", name)
 	fmt.Fprintf(w, "  %s upgrade\n", name)
 	fmt.Fprintf(w, "  %s upgrade --dry-run\n", name)
+	fmt.Fprintf(w, "  %s update\n", name)
 }
 
 func main() {
@@ -189,6 +190,8 @@ func main() {
 		}
 	case "upgrade":
 		upgradeConfigs(args.dryRun)
+	case "update":
+		runSelfUpdate(args.dryRun, args.yes)
 	case "list":
 		dashboardOrList()
 	case "up":
