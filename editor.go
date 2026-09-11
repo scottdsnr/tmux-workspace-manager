@@ -39,6 +39,23 @@ func openInEditor(path string) {
 	}
 }
 
+// rawEditExecCmd builds the $EDITOR invocation for path, for use with
+// tea.ExecProcess to suspend a running TUI and hand the terminal to it
+// directly. Unlike openInEditor, it doesn't fall back to nano on failure —
+// the caller just returns to the dashboard once the editor exits.
+func rawEditExecCmd(path string) *exec.Cmd {
+	editorCmd := os.Getenv("EDITOR")
+	if editorCmd == "" {
+		editorCmd = settings.Editor
+	}
+	parts, err := shlexSplit(editorCmd)
+	if err != nil || len(parts) == 0 {
+		parts = []string{editorCmd}
+	}
+	args := append(append([]string{}, parts[1:]...), path)
+	return exec.Command(parts[0], args...)
+}
+
 func runInteractive(args []string) error {
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Stdin = os.Stdin

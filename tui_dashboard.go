@@ -130,9 +130,24 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 					return m, func() tea.Msg { return pushWizardMsg{alias: it.alias} }
 				}
 				return m, nil
+			case "E":
+				if it, ok := m.selected(); ok {
+					if path := findConfigPath(it.alias); path != "" {
+						alias := it.alias
+						return m, func() tea.Msg {
+							return screenFinishedMsg{exec: rawEditExecCmd(path), validateAfterExec: alias}
+						}
+					}
+				}
+				return m, nil
 			case "v":
 				if it, ok := m.selected(); ok {
 					return m, func() tea.Msg { return pushValidateMsg{alias: it.alias} }
+				}
+				return m, nil
+			case "y":
+				if it, ok := m.selected(); ok {
+					return m, func() tea.Msg { return pushDuplicateMsg{alias: it.alias} }
 				}
 				return m, nil
 			}
@@ -146,7 +161,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 
 func (m dashboardModel) helpView() string {
 	return helpBarStyle.Render(
-		"enter/o up   d down   e edit   n new   v validate   c settings   / filter   r refresh   q quit",
+		"enter/o up   d down   e edit   E raw edit   y duplicate   n new   v validate   c settings   / filter   r refresh   q quit",
 	)
 }
 

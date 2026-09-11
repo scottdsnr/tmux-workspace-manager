@@ -17,15 +17,26 @@ type (
 	}
 	pushSettingsMsg     struct{}
 	pushValidateMsg     struct{ alias string }
+	pushDuplicateMsg    struct{ alias string }
 	pushUpMsg           struct{ alias string }
 	pushDownConfirmMsg  struct{ alias, title string }
 	pushDownProgressMsg struct{ alias string }
 
 	// screenFinishedMsg signals a child screen is done. If exec is set, the
 	// router hands the terminal to it via tea.ExecProcess (suspending the
-	// Bubble Tea renderer) before returning to the dashboard or quitting.
-	screenFinishedMsg struct{ exec *exec.Cmd }
-	execFinishedMsg   struct{ err error }
+	// Bubble Tea renderer) before returning to the dashboard or quitting. If
+	// validateAfterExec is also set, the router lands on the validate screen
+	// for that alias once the exec'd process exits, instead of going
+	// straight back to the dashboard — used after a raw-YAML edit so
+	// mistakes surface immediately.
+	screenFinishedMsg struct {
+		exec              *exec.Cmd
+		validateAfterExec string
+	}
+	execFinishedMsg struct {
+		err               error
+		validateAfterExec string
+	}
 )
 
 type screenKind int
@@ -38,6 +49,7 @@ const (
 	screenWizard
 	screenSettings
 	screenValidate
+	screenDuplicate
 )
 
 // appModel is the root router. In "embedded" mode (bare invocation or
@@ -56,6 +68,7 @@ type appModel struct {
 	wizard    *wizardModel
 	settings  *settingsModel
 	validate  *validateModel
+	duplicate *duplicateModel
 }
 
 func newDashboardApp() appModel {
@@ -78,7 +91,7 @@ func (m appModel) toDashboard() (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	m.screen = screenDashboard
-	m.progress, m.confirm, m.wizard, m.settings, m.validate = nil, nil, nil, nil, nil
+	m.progress, m.confirm, m.wizard, m.settings, m.validate, m.duplicate = nil, nil, nil, nil, nil, nil
 	m.dashboard = newDashboardModel()
 	initCmd := m.dashboard.Init()
 	if m.width > 0 {
@@ -102,11 +115,15 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dashboard, cmd = m.dashboard.Update(msg)
 			return m, cmd
 		}
+		if m.wizard != nil {
+			m.wizard.width, m.wizard.height = msg.Width, msg.Height
+		}
 		return m, nil
 
 	case pushWizardMsg:
 		m.screen = screenWizard
 		m.wizard = newWizardModel(msg.create, msg.alias)
+		m.wizard.width, m.wizard.height = m.width, m.height
 		return m, m.wizard.Init()
 
 	case pushSettingsMsg:
@@ -118,6 +135,11 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenValidate
 		m.validate = newValidateModel(msg.alias)
 		return m, m.validate.Init()
+
+	case pushDuplicateMsg:
+		m.screen = screenDuplicate
+		m.duplicate = newDuplicateModel(msg.alias)
+		return m, m.duplicate.Init()
 
 	case pushUpMsg:
 		m.screen = screenProgress
@@ -137,11 +159,19 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenFinishedMsg:
 		if msg.exec != nil {
 			cmd := msg.exec
-			return m, tea.ExecProcess(cmd, func(err error) tea.Msg { return execFinishedMsg{err: err} })
+			validateAlias := msg.validateAfterExec
+			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+				return execFinishedMsg{err: err, validateAfterExec: validateAlias}
+			})
 		}
 		return m.toDashboard()
 
 	case execFinishedMsg:
+		if msg.validateAfterExec != "" {
+			m.screen = screenValidate
+			m.validate = newValidateModel(msg.validateAfterExec)
+			return m, m.validate.Init()
+		}
 		return m.toDashboard()
 	}
 
@@ -170,6 +200,10 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.validate, cmd = m.validate.Update(msg)
 		return m, cmd
+	case screenDuplicate:
+		var cmd tea.Cmd
+		m.duplicate, cmd = m.duplicate.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -197,6 +231,10 @@ func (m appModel) View() string {
 	case screenValidate:
 		if m.validate != nil {
 			return m.validate.View()
+		}
+	case screenDuplicate:
+		if m.duplicate != nil {
+			return m.duplicate.View()
 		}
 	}
 	return ""

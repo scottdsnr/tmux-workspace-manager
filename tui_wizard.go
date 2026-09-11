@@ -7,6 +7,8 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/yaml.v3"
 )
 
 type wizardStep int
@@ -33,6 +35,8 @@ type wizardModel struct {
 	alias   string
 	step    wizardStep
 	err     string
+
+	width, height int
 
 	aliasInput textinput.Model
 	titleInput textinput.Model
@@ -121,8 +125,16 @@ func newWizardModel(create bool, alias string) *wizardModel {
 func (m *wizardModel) Init() tea.Cmd { return textinput.Blink }
 
 func (m *wizardModel) Update(msg tea.Msg) (*wizardModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.String() == "ctrl+c" {
-		return m, func() tea.Msg { return screenFinishedMsg{} }
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch key.String() {
+		case "ctrl+c":
+			return m, func() tea.Msg { return screenFinishedMsg{} }
+		case "ctrl+r":
+			if cmd := m.rawEditCmd(); cmd != nil {
+				return m, cmd
+			}
+			return m, nil
+		}
 	}
 
 	switch {
@@ -541,7 +553,11 @@ func (m *wizardModel) updateReview(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m *wizardModel) saveWorkspace() (*wizardModel, tea.Cmd) {
+// buildRawConfig assembles the workspace map from the wizard's current
+// draft state, in the same shape saveConfigRaw expects. It's shared by
+// saveWorkspace, the live preview pane, and the raw-edit escape hatch, so
+// all three always agree on what the draft currently looks like.
+func (m *wizardModel) buildRawConfig() map[string]interface{} {
 	var windows []Window
 	for _, d := range m.windows {
 		var panes []Pane
@@ -553,11 +569,6 @@ func (m *wizardModel) saveWorkspace() (*wizardModel, tea.Cmd) {
 	projectPath := strings.TrimSpace(m.pathInput.Value())
 	if projectPath == "" {
 		projectPath = "."
-	}
-
-	if errs := validateTypedConfig(projectPath, windows); len(errs) > 0 {
-		m.err = "cannot save: " + strings.Join(errs, "; ")
-		return m, nil
 	}
 
 	displayName := strings.TrimSpace(m.titleInput.Value())
@@ -580,6 +591,18 @@ func (m *wizardModel) saveWorkspace() (*wizardModel, tea.Cmd) {
 			}
 		}
 	}
+	return raw
+}
+
+func (m *wizardModel) saveWorkspace() (*wizardModel, tea.Cmd) {
+	raw := m.buildRawConfig()
+	windows, _ := raw["windows"].([]Window)
+	projectPath, _ := raw["project_path"].(string)
+
+	if errs := validateTypedConfig(projectPath, windows); len(errs) > 0 {
+		m.err = "cannot save: " + strings.Join(errs, "; ")
+		return m, nil
+	}
 
 	if _, err := saveConfigRaw(m.alias, raw); err != nil {
 		m.err = "failed to save: " + err.Error()
@@ -588,7 +611,51 @@ func (m *wizardModel) saveWorkspace() (*wizardModel, tea.Cmd) {
 	return m, func() tea.Msg { return screenFinishedMsg{} }
 }
 
+// rawEditCmd saves the current draft (even if incomplete) and hands the
+// terminal to $EDITOR on the resulting file, as an escape hatch out of the
+// step-by-step flow. It requires an alias, since there's nowhere to save to
+// before one has been chosen.
+func (m *wizardModel) rawEditCmd() tea.Cmd {
+	if strings.TrimSpace(m.alias) == "" {
+		m.err = "choose an alias before editing raw YAML"
+		return nil
+	}
+	path, err := saveConfigRaw(m.alias, m.buildRawConfig())
+	if err != nil {
+		m.err = "failed to save: " + err.Error()
+		return nil
+	}
+	alias := m.alias
+	return func() tea.Msg { return screenFinishedMsg{exec: rawEditExecCmd(path), validateAfterExec: alias} }
+}
+
+// previewYAML renders the current draft exactly as saveWorkspace would
+// write it, for the live preview pane.
+func (m *wizardModel) previewYAML() string {
+	node, err := encodeOrdered(m.buildRawConfig(), topLevelOrder)
+	if err != nil {
+		return err.Error()
+	}
+	data, err := yaml.Marshal(node)
+	if err != nil {
+		return err.Error()
+	}
+	return string(data)
+}
+
 func (m *wizardModel) View() string {
+	// Every viewXxx below wraps its panel in a leading/trailing blank line
+	// on its own, which is fine rendered alone but would misalign the two
+	// panels by a row when joined side by side, so normalize before (and
+	// re-add after) combining them.
+	main := strings.Trim(m.viewMain(), "\n")
+	if preview := m.viewPreview(main); preview != "" {
+		return "\n" + lipgloss.JoinHorizontal(lipgloss.Top, main, preview) + "\n"
+	}
+	return "\n" + main + "\n"
+}
+
+func (m *wizardModel) viewMain() string {
 	switch {
 	case m.overwriteConfirming:
 		return m.viewOverwriteConfirm()
@@ -614,6 +681,39 @@ func (m *wizardModel) View() string {
 	return ""
 }
 
+// viewPreview renders a live YAML preview pane alongside main, sized to
+// whatever room is left on the terminal. It returns "" when there isn't
+// enough width to be worth showing (a narrow terminal keeps the plain
+// single-panel layout).
+func (m *wizardModel) viewPreview(main string) string {
+	if m.width <= 0 {
+		return ""
+	}
+	avail := m.width - lipgloss.Width(main) - 2
+	if avail < 40 {
+		return ""
+	}
+
+	alias := m.alias
+	if alias == "" {
+		alias = "<alias>"
+	}
+	body := titleStyle.Render("Preview") + "\n" +
+		subtleStyle.Render(alias+".yml") + "\n\n" +
+		strings.TrimRight(m.previewYAML(), "\n") + "\n\n" +
+		subtleStyle.Render("^R edit raw yaml")
+
+	contentWidth := avail - 2
+	if contentWidth > 64 {
+		contentWidth = 64 // wide terminals still get a readable column, not a stretched one
+	}
+	style := panelStyle
+	if contentWidth > 0 {
+		style = style.Width(contentWidth)
+	}
+	return style.Render(body)
+}
+
 func (m *wizardModel) viewAlias() string {
 	title := "New workspace"
 	if m.err != "" && !m.editing {
@@ -631,7 +731,7 @@ func (m *wizardModel) viewAlias() string {
 func (m *wizardModel) viewSimpleField(title, label string, input textinput.Model, help string) string {
 	body := titleStyle.Render(title) + "\n\n" +
 		fieldLabel.Render(label) + "\n" + input.View() + "\n\n" +
-		subtleStyle.Render(help)
+		subtleStyle.Render(help+"   ^R raw edit")
 	if m.err != "" {
 		body += "\n\n" + errorStyle.Render(m.err)
 	}
@@ -673,7 +773,7 @@ func (m *wizardModel) viewWindowsList() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
-	b.WriteString(subtleStyle.Render("a add   enter edit   d delete   n next: teardown   esc back"))
+	b.WriteString(subtleStyle.Render("a add   enter edit   d delete   n next: teardown   esc back   ^R raw edit"))
 	return "\n" + panelStyle.Render(strings.TrimRight(b.String(), "\n")) + "\n"
 }
 
@@ -762,7 +862,7 @@ func (m *wizardModel) viewTeardown() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
-	help := "a add   enter edit   d delete   n next: review   esc back"
+	help := "a add   enter edit   d delete   n next: review   esc back   ^R raw edit"
 	if m.addingTeardown {
 		help = "enter confirm   esc cancel"
 	}
@@ -788,12 +888,27 @@ func (m *wizardModel) viewReview() string {
 	b.WriteString(fmt.Sprintf("path:   %s\n\n", path))
 
 	b.WriteString(fmt.Sprintf("windows (%d):\n", len(m.windows)))
-	for _, w := range m.windows {
-		line := fmt.Sprintf("  - %s (%d pane(s))", w.name, len(w.panes))
+	for wi, w := range m.windows {
+		branch, cont := "├─", "│  "
+		if wi == len(m.windows)-1 {
+			branch, cont = "└─", "   "
+		}
+		line := fmt.Sprintf("  %s %s", branch, w.name)
 		if w.onStop != "" {
-			line += "  on_stop: " + w.onStop
+			line += subtleStyle.Render("  (on_stop: " + w.onStop + ")")
 		}
 		b.WriteString(line + "\n")
+		for pi, p := range w.panes {
+			pBranch := "├─"
+			if pi == len(w.panes)-1 {
+				pBranch = "└─"
+			}
+			text := p
+			if text == "" {
+				text = "(shell)"
+			}
+			b.WriteString(subtleStyle.Render(fmt.Sprintf("  %s%s %s", cont, pBranch, text)) + "\n")
+		}
 	}
 
 	b.WriteString(fmt.Sprintf("\nteardown (%d):\n", len(m.teardown)))
@@ -804,6 +919,6 @@ func (m *wizardModel) viewReview() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
-	b.WriteString(subtleStyle.Render("s save   esc back"))
+	b.WriteString(subtleStyle.Render("s save   esc back   ^R raw edit"))
 	return "\n" + panelStyle.Render(strings.TrimRight(b.String(), "\n")) + "\n"
 }
