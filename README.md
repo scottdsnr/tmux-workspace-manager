@@ -29,11 +29,8 @@ Everything below assumes the command is called `twm`; substitute
 your own name/path if you installed it differently.
 
 **Building from source:** with a Go toolchain installed, either
-`go install github.com/scottdsnr/tmux-workspace-manager@latest` (this names
-the installed binary `tmux-workspace-manager` — Go always uses the module's
-own name, not `twm` — so rename it afterward if you want the shorter command:
-`mv "$(go env GOPATH)/bin/tmux-workspace-manager" "$(go env GOPATH)/bin/twm"`),
-or clone the repo and run `go build -o twm .`.
+`go install github.com/scottdsnr/tmux-workspace-manager/cmd/twm@latest`,
+or clone the repo and run `go build -o twm ./cmd/twm`.
 
 ## Quick start
 
@@ -88,7 +85,7 @@ place — no need to re-run the installer or remember its URL. Pass `-y` to
 skip the confirmation prompt (handy for scripting), or `--dry-run` to just
 see whether an update is available. Only Linux and macOS on amd64/arm64 have
 prebuilt binaries; a `go install`-built binary should instead be updated by
-re-running `go install github.com/scottdsnr/tmux-workspace-manager@latest`.
+re-running `go install github.com/scottdsnr/tmux-workspace-manager/cmd/twm@latest`.
 
 ## Profiles
 
