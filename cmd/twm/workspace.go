@@ -76,13 +76,13 @@ func runUp(alias string, dry bool, report reportFunc) error {
 		tmuxSetOption(sessionName+":"+winName, "pane-base-index", settings.PaneBaseIndex, true)
 
 		if len(panes) > 0 {
-			sendPaneCommand(currentPaneID, panes[0])
+			sendPaneCommand(currentPaneID, config, win, panes[0])
 		}
 
 		for _, pane := range panes[minInt(1, len(panes)):] {
 			paneDir := resolvePaneDir(winDir, pane)
 			currentPaneID = tmuxSplitWindow(currentPaneID, paneDir)
-			sendPaneCommand(currentPaneID, pane)
+			sendPaneCommand(currentPaneID, config, win, pane)
 		}
 
 		if win.Layout != "" {
@@ -102,23 +102,25 @@ func minInt(a, b int) int {
 	return b
 }
 
-// sendPaneCommand sends a pane's env assignments (if any) and command to
-// paneID as a single line, so the exports are visible to the command.
-func sendPaneCommand(paneID string, pane Pane) {
-	if cmd := buildPaneCommand(pane); cmd != "" {
+// sendPaneCommand sends the env assignments that apply to a pane (its own,
+// plus anything inherited from its window and the workspace) and its
+// command to paneID as a single line, so the exports are visible to the
+// command.
+func sendPaneCommand(paneID string, config Config, win Window, pane Pane) {
+	if cmd := buildPaneCommand(resolvePaneEnv(config.Env, win.Env, pane.Env), pane.Command); cmd != "" {
 		tmuxSendKeys(paneID, cmd)
 	}
 }
 
-// buildPaneCommand combines a pane's env vars and command into the single
-// shell line send-keys should type. Env vars are sorted for deterministic
-// output (useful for --dry-run and tests).
-func buildPaneCommand(pane Pane) string {
-	if len(pane.Env) == 0 {
-		return pane.Command
+// buildPaneCommand combines a pane's resolved env vars and command into the
+// single shell line send-keys should type. Env vars are sorted for
+// deterministic output (useful for --dry-run and tests).
+func buildPaneCommand(env map[string]string, command string) string {
+	if len(env) == 0 {
+		return command
 	}
-	keys := make([]string, 0, len(pane.Env))
-	for k := range pane.Env {
+	keys := make([]string, 0, len(env))
+	for k := range env {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -126,10 +128,10 @@ func buildPaneCommand(pane Pane) string {
 	var b strings.Builder
 	b.WriteString("export")
 	for _, k := range keys {
-		b.WriteString(" " + k + "=" + shellQuote(pane.Env[k]))
+		b.WriteString(" " + k + "=" + shellQuote(env[k]))
 	}
-	if pane.Command != "" {
-		b.WriteString(" && " + pane.Command)
+	if command != "" {
+		b.WriteString(" && " + command)
 	}
 	return b.String()
 }

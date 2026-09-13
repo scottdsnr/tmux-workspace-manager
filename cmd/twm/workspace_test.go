@@ -28,8 +28,42 @@ func TestBuildPaneCommand(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := buildPaneCommand(tc.pane); got != tc.want {
+			if got := buildPaneCommand(tc.pane.Env, tc.pane.Command); got != tc.want {
 				t.Errorf("buildPaneCommand(%+v) = %q, want %q", tc.pane, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolvePaneEnv(t *testing.T) {
+	cases := []struct {
+		name                       string
+		config, window, pane, want map[string]string
+	}{
+		{"all empty", nil, nil, nil, nil},
+		{
+			"workspace env reaches a pane that sets none",
+			map[string]string{"A": "1"}, nil, nil,
+			map[string]string{"A": "1"},
+		},
+		{
+			"narrower scopes override wider ones key by key",
+			map[string]string{"A": "1", "B": "1"},
+			map[string]string{"B": "2", "C": "2"},
+			map[string]string{"C": "3"},
+			map[string]string{"A": "1", "B": "2", "C": "3"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolvePaneEnv(tc.config, tc.window, tc.pane)
+			if len(got) != len(tc.want) {
+				t.Fatalf("resolvePaneEnv() = %v, want %v", got, tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Errorf("resolvePaneEnv()[%q] = %q, want %q", k, got[k], v)
+				}
 			}
 		})
 	}

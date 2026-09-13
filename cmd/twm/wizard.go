@@ -23,6 +23,31 @@ func prompt(msg string) string {
 	return strings.TrimSpace(line)
 }
 
+// promptEnv asks for a single line of KEY=value assignments, re-prompting
+// until it parses. current is offered as the default, so hitting Enter
+// keeps what's already set; typing "none" clears it.
+func promptEnv(label string, current map[string]string) map[string]string {
+	shown := formatEnvAssignments(current)
+	if shown == "" {
+		shown = "(none)"
+	}
+	for {
+		line := prompt(fmt.Sprintf("%s [%s] (KEY=value, space separated; 'none' to clear): ", label, shown))
+		if line == "" {
+			return current
+		}
+		if strings.ToLower(line) == "none" {
+			return nil
+		}
+		env, errStr := parseEnvAssignments(line)
+		if errStr != "" {
+			fmt.Printf("  %s%s\n", sym("error"), errStr)
+			continue
+		}
+		return env
+	}
+}
+
 func validateWorkspaceCmd(alias string) {
 	raw, _ := loadConfigRaw(alias)
 	errs := validateConfig(raw)
@@ -206,6 +231,13 @@ func editWorkspaceInteractive(alias string) {
 		break
 	}
 
+	fmt.Printf("\n%sWorkspace-wide environment (exported in every pane of every window):\n", sym("label"))
+	if env := promptEnv("  Workspace env", stringMapFromRaw(raw["env"])); len(env) > 0 {
+		raw["env"] = env
+	} else {
+		delete(raw, "env")
+	}
+
 	fmt.Printf("\n%sReviewing Window and Pane Configurations...\n", sym("package"))
 	var updatedWindows []Window
 
@@ -240,6 +272,8 @@ func editWorkspaceInteractive(alias string) {
 			finalWinPath = newWinPath
 		}
 
+		winEnv := promptEnv("  Window env (adds to workspace env)", stringMapFromRaw(w["env"]))
+
 		currentOnStop, _ := w["on_stop"].(string)
 		onStopPrompt := currentOnStop
 		if onStopPrompt == "" {
@@ -265,7 +299,9 @@ func editWorkspaceInteractive(alias string) {
 			if newCmd != "" {
 				finalCmd = newCmd
 			}
-			updatedPanes = append(updatedPanes, Pane{Command: finalCmd})
+			currentPanePath, _ := p["path"].(string)
+			paneEnv := promptEnv(fmt.Sprintf("    %sPane %d env (adds to window env)", sym("arrow"), pIdx+1), stringMapFromRaw(p["env"]))
+			updatedPanes = append(updatedPanes, Pane{Command: finalCmd, Path: currentPanePath, Env: paneEnv})
 		}
 
 		for {
@@ -277,7 +313,7 @@ func editWorkspaceInteractive(alias string) {
 			updatedPanes = append(updatedPanes, Pane{Command: extraCmd})
 		}
 
-		updatedWindows = append(updatedWindows, Window{Name: finalWinName, Path: finalWinPath, OnStop: finalOnStop, Panes: updatedPanes})
+		updatedWindows = append(updatedWindows, Window{Name: finalWinName, Path: finalWinPath, OnStop: finalOnStop, Env: winEnv, Panes: updatedPanes})
 	}
 
 	for {
@@ -291,6 +327,7 @@ func editWorkspaceInteractive(alias string) {
 		}
 
 		newWinPath := prompt("  Working dir override, relative to project path (blank = project path): ")
+		newWinEnv := promptEnv("  Window env (adds to workspace env)", nil)
 
 		var newPanes []Pane
 		paneCounter := 1
@@ -305,7 +342,7 @@ func editWorkspaceInteractive(alias string) {
 
 		newOnStop := prompt("  Graceful exit command on 'down' (blank = Ctrl-C): ")
 
-		updatedWindows = append(updatedWindows, Window{Name: newName, Path: newWinPath, OnStop: newOnStop, Panes: newPanes})
+		updatedWindows = append(updatedWindows, Window{Name: newName, Path: newWinPath, OnStop: newOnStop, Env: newWinEnv, Panes: newPanes})
 	}
 
 	raw["windows"] = updatedWindows
@@ -416,6 +453,9 @@ func createWorkspaceWizard(presetAlias string) {
 		break
 	}
 
+	fmt.Printf("\n%sWorkspace-wide environment: exported in every pane of every window.\n", sym("label"))
+	projectEnv := promptEnv("   Workspace env", nil)
+
 	var windows []Window
 	fmt.Printf("\n%sLet's configure your windows and panes...\n", sym("tool"))
 
@@ -430,6 +470,7 @@ func createWorkspaceWizard(presetAlias string) {
 		}
 
 		winPath := prompt(fmt.Sprintf("   %sWorking dir override, relative to project path (blank = project path): ", sym("folder")))
+		winEnv := promptEnv(fmt.Sprintf("   %sWindow env (adds to workspace env)", sym("label")), nil)
 
 		var panes []Pane
 		paneCount := 1
@@ -444,7 +485,7 @@ func createWorkspaceWizard(presetAlias string) {
 
 		onStop := prompt(fmt.Sprintf("   %sGraceful exit command on 'down' instead of Ctrl-C (blank = none, e.g. /exit): ", sym("stop")))
 
-		windows = append(windows, Window{Name: winName, Path: winPath, OnStop: onStop, Panes: panes})
+		windows = append(windows, Window{Name: winName, Path: winPath, OnStop: onStop, Env: winEnv, Panes: panes})
 	}
 
 	var teardown []string
@@ -465,6 +506,9 @@ func createWorkspaceWizard(presetAlias string) {
 		"project_path":         rawPath,
 		"windows":              windows,
 		"teardown":             teardown,
+	}
+	if len(projectEnv) > 0 {
+		workspaceData["env"] = projectEnv
 	}
 
 	savedPath, err := saveConfigRaw(alias, workspaceData)

@@ -17,11 +17,12 @@ type Pane struct {
 }
 
 type Window struct {
-	Name   string `yaml:"name"`
-	Path   string `yaml:"path,omitempty"`
-	OnStop string `yaml:"on_stop,omitempty"`
-	Layout string `yaml:"layout,omitempty"`
-	Panes  []Pane `yaml:"panes"`
+	Name   string            `yaml:"name"`
+	Path   string            `yaml:"path,omitempty"`
+	OnStop string            `yaml:"on_stop,omitempty"`
+	Layout string            `yaml:"layout,omitempty"`
+	Env    map[string]string `yaml:"env,omitempty"`
+	Panes  []Pane            `yaml:"panes"`
 }
 
 // Teardown accepts either a bare string or a list of strings in YAML, like
@@ -53,10 +54,11 @@ func (t *Teardown) UnmarshalYAML(value *yaml.Node) error {
 }
 
 type Config struct {
-	ProjectNameDisplay string   `yaml:"project_name_display,omitempty"`
-	ProjectPath        string   `yaml:"project_path"`
-	Windows            []Window `yaml:"windows"`
-	Teardown           Teardown `yaml:"teardown,omitempty"`
+	ProjectNameDisplay string            `yaml:"project_name_display,omitempty"`
+	ProjectPath        string            `yaml:"project_path"`
+	Env                map[string]string `yaml:"env,omitempty"`
+	Windows            []Window          `yaml:"windows"`
+	Teardown           Teardown          `yaml:"teardown,omitempty"`
 }
 
 // workspacesDoc is the consolidated on-disk shape: every workspace alias
@@ -230,7 +232,7 @@ func loadConfigTypedErr(alias string) (Config, error) {
 	return cfg, nil
 }
 
-var topLevelOrder = []string{"project_name_display", "project_path", "windows", "teardown"}
+var topLevelOrder = []string{"project_name_display", "project_path", "env", "windows", "teardown"}
 
 // saveConfigRaw writes a workspace profile into the consolidated workspaces
 // file, with known top-level keys in a stable, readable order followed by
@@ -300,6 +302,12 @@ func validateConfig(cfg map[string]interface{}) []string {
 		errs = append(errs, "project_path must be a non-empty string")
 	}
 
+	if envRaw, hasEnv := cfg["env"]; hasEnv {
+		if !isStringMap(envRaw) {
+			errs = append(errs, "env must be a map of strings")
+		}
+	}
+
 	windowsRaw, hasWindows := cfg["windows"]
 	windows, isList := asInterfaceList(windowsRaw)
 	if !hasWindows || !isList || len(windows) == 0 {
@@ -329,6 +337,12 @@ func validateConfig(cfg map[string]interface{}) []string {
 			if layoutRaw, hasLayout := w["layout"]; hasLayout {
 				if _, ok := layoutRaw.(string); !ok {
 					errs = append(errs, fmt.Sprintf("window '%s' layout must be a string", name))
+				}
+			}
+
+			if envRaw, hasEnv := w["env"]; hasEnv {
+				if !isStringMap(envRaw) {
+					errs = append(errs, fmt.Sprintf("window '%s' env must be a map of strings", name))
 				}
 			}
 
@@ -424,7 +438,8 @@ func asInterfaceList(v interface{}) ([]interface{}, bool) {
 }
 
 // isStringMap reports whether v decoded (via yaml.v3) as a mapping whose
-// values are all strings — the shape a pane's "env" field must have.
+// values are all strings — the shape an "env" field must have at every
+// level (workspace, window, pane).
 func isStringMap(v interface{}) bool {
 	m, ok := v.(map[string]interface{})
 	if !ok {

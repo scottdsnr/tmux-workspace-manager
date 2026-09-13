@@ -96,6 +96,8 @@ keyed by alias. Each entry describes a tmux session named after its alias:
 tabs:
   project_name_display: Tabs
   project_path: ~/code/tabs
+  env:
+    APP_ENV: local
   windows:
     - name: AI
       panes:
@@ -108,12 +110,13 @@ tabs:
         - command: ""
     - name: App
       layout: main-vertical
+      env:
+        PORT: "3000"
       panes:
         - command: npm run dev
           path: frontend
           env:
             NODE_ENV: development
-            PORT: "3000"
         - command: tail -f storage/logs/laravel.log
           path: backend
   teardown:
@@ -123,6 +126,9 @@ tabs:
 - **`project_path`** — the project's working directory. Relative paths are
   resolved against the `base_dir` setting (see below), not the directory
   `twm` was run from.
+- **`env`** (optional) — map of environment variables exported in *every*
+  pane of *every* window, before that pane's command runs. Set something
+  once here rather than repeating it per pane.
 - **`windows`** — created in order; each pane after the first splits the
   window horizontally, then `layout` (if set) rearranges all of them.
   - **`name`** — the tmux window name.
@@ -133,6 +139,8 @@ tabs:
     (`even-horizontal`, `even-vertical`, `main-horizontal`, `main-vertical`,
     `tiled`) or a literal tmux layout string (e.g. one copied from
     `tmux list-windows -F '#{window_layout}'`).
+  - **`env`** (optional) — environment variables exported in every pane of
+    this window. Merged on top of the workspace-level `env`.
   - **`on_stop`** (optional) — a command sent to the window's first pane
     instead of Ctrl-C when running `down`. Use this for anything that needs a
     graceful exit (e.g. `/exit` for a Claude Code session, `:q` for an editor
@@ -143,8 +151,15 @@ tabs:
     - **`path`** (optional) — working directory for this pane only, relative
       to the window's `path` (or absolute). Overrides the window's directory
       for just this one pane.
-    - **`env`** (optional) — map of environment variables exported in the
-      pane before `command` runs (e.g. `NODE_ENV: development`).
+    - **`env`** (optional) — environment variables exported in this pane
+      only (e.g. `NODE_ENV: development`).
+
+  Env is merged from widest to narrowest scope — workspace, then window,
+  then pane — and a narrower scope wins for keys it sets, inheriting the
+  rest. In the example above, the `npm run dev` pane sees `APP_ENV=local`,
+  `PORT=3000`, and `NODE_ENV=development`. The exports are typed into the
+  pane's shell, so panes with no `command` get an `export ...` line in their
+  scrollback too.
 - **`teardown`** — commands run (and waited on) in `project_path` after
   panes are signaled to stop, before the session is killed. A single string
   is also accepted.

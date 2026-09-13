@@ -194,6 +194,51 @@ func TestValidateConfigPaneEnv(t *testing.T) {
 	}
 }
 
+func TestValidateConfigWorkspaceAndWindowEnv(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     interface{}
+		wantErr bool
+	}{
+		{"valid map of strings", map[string]interface{}{"FOO": "bar"}, false},
+		{"non-string value", map[string]interface{}{"FOO": 5}, true},
+		{"not a map", "FOO=bar", true},
+	}
+	for _, tc := range cases {
+		t.Run("workspace/"+tc.name, func(t *testing.T) {
+			cfg := validRawConfig()
+			cfg["env"] = tc.env
+			errs := validateConfig(cfg)
+			if contains(errs, "env must be a map of strings") != tc.wantErr {
+				t.Fatalf("env=%v: wantErr=%v, errs=%v", tc.env, tc.wantErr, errs)
+			}
+		})
+		t.Run("window/"+tc.name, func(t *testing.T) {
+			cfg := validRawConfig()
+			cfg["windows"] = []interface{}{
+				map[string]interface{}{
+					"name":  "AI",
+					"env":   tc.env,
+					"panes": []interface{}{map[string]interface{}{"command": "x"}},
+				},
+			}
+			errs := validateConfig(cfg)
+			if contains(errs, "window 'AI' env must be a map of strings") != tc.wantErr {
+				t.Fatalf("env=%v: wantErr=%v, errs=%v", tc.env, tc.wantErr, errs)
+			}
+		})
+	}
+}
+
+func contains(errs []string, want string) bool {
+	for _, e := range errs {
+		if e == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateConfigTeardownVariants(t *testing.T) {
 	cases := []struct {
 		name    string

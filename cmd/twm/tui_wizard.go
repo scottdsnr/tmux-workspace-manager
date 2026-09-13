@@ -16,14 +16,33 @@ const (
 	stepAlias wizardStep = iota
 	stepTitle
 	stepPath
+	stepEnv
 	stepWindows
 	stepTeardown
 	stepReview
 )
 
+// wizardPaneDraft holds a pane as the wizard edits it. path isn't editable
+// in the TUI yet, but it's carried through so editing a profile that sets
+// it doesn't silently drop it. env is held in the single-line "KEY=value"
+// form parseEnvAssignments accepts.
+type wizardPaneDraft struct {
+	command, path, env string
+}
+
 type wizardWindowDraft struct {
-	name, path, onStop string
-	panes              []string
+	name, path, onStop, env string
+	panes                   []wizardPaneDraft
+}
+
+// paneCommands pulls just the command strings out of a window's panes, for
+// the preview renderers that only display commands.
+func paneCommands(panes []wizardPaneDraft) []string {
+	out := make([]string, 0, len(panes))
+	for _, p := range panes {
+		out = append(out, p.command)
+	}
+	return out
 }
 
 // wizardModel drives the create/edit flow as a stack of steps, with two
@@ -40,6 +59,7 @@ type wizardModel struct {
 	aliasInput textinput.Model
 	titleInput textinput.Model
 	pathInput  textinput.Model
+	envInput   textinput.Model // workspace-wide env, "KEY=value KEY2=value"
 
 	overwriteConfirming bool
 	pathConfirming      bool
@@ -51,15 +71,18 @@ type wizardModel struct {
 	winEditing    bool
 	winIsNew      bool
 	winIndex      int
-	winFocus      int // 0=name 1=path 2=on_stop 3=panes
+	winFocus      int // 0=name 1=path 2=env 3=on_stop 4=panes
 	winNameInput  textinput.Model
 	winPathInput  textinput.Model
+	winEnvInput   textinput.Model
 	winStopInput  textinput.Model
-	winPanes      []string
+	winPanes      []wizardPaneDraft
 	paneCursor    int
 	addingPane    bool
+	paneEnvFocus  bool // in the pane editor, editing env rather than command
 	paneEditIndex int
 	paneInput     textinput.Model
+	paneEnvInput  textinput.Model
 
 	teardown          []string
 	teardownCursor    int
@@ -73,6 +96,7 @@ func newWizardModel(create bool, alias string) *wizardModel {
 	m.aliasInput = newSettingsInput("")
 	m.titleInput = newSettingsInput("")
 	m.pathInput = newSettingsInput("")
+	m.envInput = newSettingsInput("")
 
 	if create {
 		m.aliasInput.SetValue(strings.ToLower(strings.TrimSpace(alias)))
@@ -97,23 +121,35 @@ func newWizardModel(create bool, alias string) *wizardModel {
 	if pp, ok := raw["project_path"].(string); ok {
 		m.pathInput.SetValue(pp)
 	}
+	m.envInput.SetValue(formatEnvAssignments(stringMapFromRaw(raw["env"])))
 	windowsRaw, _ := asInterfaceList(raw["windows"])
 	for _, wRaw := range windowsRaw {
 		w, _ := wRaw.(map[string]interface{})
 		name, _ := w["name"].(string)
 		path, _ := w["path"].(string)
 		onStop, _ := w["on_stop"].(string)
-		var panes []string
+		var panes []wizardPaneDraft
 		panesRaw, _ := asInterfaceList(w["panes"])
 		for _, pRaw := range panesRaw {
 			p, _ := pRaw.(map[string]interface{})
 			cmd, _ := p["command"].(string)
-			panes = append(panes, cmd)
+			panePath, _ := p["path"].(string)
+			panes = append(panes, wizardPaneDraft{
+				command: cmd,
+				path:    panePath,
+				env:     formatEnvAssignments(stringMapFromRaw(p["env"])),
+			})
 		}
 		if len(panes) == 0 {
-			panes = []string{""}
+			panes = []wizardPaneDraft{{}}
 		}
-		m.windows = append(m.windows, wizardWindowDraft{name: name, path: path, onStop: onStop, panes: panes})
+		m.windows = append(m.windows, wizardWindowDraft{
+			name:   name,
+			path:   path,
+			onStop: onStop,
+			env:    formatEnvAssignments(stringMapFromRaw(w["env"])),
+			panes:  panes,
+		})
 	}
 	m.teardown = teardownFromRaw(raw["teardown"])
 	m.step = stepTitle
@@ -152,6 +188,8 @@ func (m *wizardModel) Update(msg tea.Msg) (*wizardModel, tea.Cmd) {
 		return m.updateTitle(msg)
 	case stepPath:
 		return m.updatePath(msg)
+	case stepEnv:
+		return m.updateEnv(msg)
 	case stepWindows:
 		return m.updateWindowsList(msg)
 	case stepTeardown:
@@ -221,6 +259,14 @@ func (m *wizardModel) updateTitle(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	return m, cmd
 }
 
+// goToEnv is where the path step lands: workspace-wide env sits between
+// "where the project is" and "what windows it has", since it applies to
+// every pane of every window below it.
+func (m *wizardModel) goToEnv() (*wizardModel, tea.Cmd) {
+	m.step = stepEnv
+	return m, m.envInput.Focus()
+}
+
 func (m *wizardModel) goToWindows() (*wizardModel, tea.Cmd) {
 	m.step = stepWindows
 	if m.windowCursor >= len(m.windows) {
@@ -247,7 +293,7 @@ func (m *wizardModel) updatePath(msg tea.Msg) (*wizardModel, tea.Cmd) {
 				m.pathConfirming = true
 				return m, nil
 			}
-			return m.goToWindows()
+			return m.goToEnv()
 		}
 	}
 	var cmd tea.Cmd
@@ -261,10 +307,10 @@ func (m *wizardModel) updatePathConfirm(msg tea.Msg) (*wizardModel, tea.Cmd) {
 		case "ctrl+g":
 			os.MkdirAll(resolveProjectPath(strings.TrimSpace(m.pathInput.Value()), settings.BaseDir), 0755)
 			m.pathConfirming = false
-			return m.goToWindows()
+			return m.goToEnv()
 		case "ctrl+u":
 			m.pathConfirming = false
-			return m.goToWindows()
+			return m.goToEnv()
 		case "esc", "ctrl+n":
 			m.pathConfirming = false
 		}
@@ -272,12 +318,32 @@ func (m *wizardModel) updatePathConfirm(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m *wizardModel) updateWindowsList(msg tea.Msg) (*wizardModel, tea.Cmd) {
+func (m *wizardModel) updateEnv(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
 		case "esc":
 			m.step = stepPath
 			return m, m.pathInput.Focus()
+		case "enter":
+			if _, errStr := parseEnvAssignments(m.envInput.Value()); errStr != "" {
+				m.err = errStr
+				return m, nil
+			}
+			m.err = ""
+			m.envInput.Blur()
+			return m.goToWindows()
+		}
+	}
+	var cmd tea.Cmd
+	m.envInput, cmd = m.envInput.Update(msg)
+	return m, cmd
+}
+
+func (m *wizardModel) updateWindowsList(msg tea.Msg) (*wizardModel, tea.Cmd) {
+	if key, ok := msg.(tea.KeyMsg); ok {
+		switch key.String() {
+		case "esc":
+			return m.goToEnv()
 		case "up", "ctrl+k":
 			if m.windowCursor > 0 {
 				m.windowCursor--
@@ -324,6 +390,7 @@ func (m *wizardModel) startWindowEdit(idx int) {
 		m.winIndex = -1
 		m.winNameInput = newSettingsInput("")
 		m.winPathInput = newSettingsInput("")
+		m.winEnvInput = newSettingsInput("")
 		m.winStopInput = newSettingsInput("")
 		m.winPanes = nil
 	} else {
@@ -332,10 +399,11 @@ func (m *wizardModel) startWindowEdit(idx int) {
 		d := m.windows[idx]
 		m.winNameInput = newSettingsInput(d.name)
 		m.winPathInput = newSettingsInput(d.path)
+		m.winEnvInput = newSettingsInput(d.env)
 		m.winStopInput = newSettingsInput(d.onStop)
-		m.winPanes = append([]string{}, d.panes...)
+		m.winPanes = append([]wizardPaneDraft{}, d.panes...)
 		if len(m.winPanes) == 0 {
-			m.winPanes = []string{""}
+			m.winPanes = []wizardPaneDraft{{}}
 		}
 	}
 	m.winNameInput.Focus()
@@ -344,6 +412,7 @@ func (m *wizardModel) startWindowEdit(idx int) {
 func (m *wizardModel) blurWindowFields() {
 	m.winNameInput.Blur()
 	m.winPathInput.Blur()
+	m.winEnvInput.Blur()
 	m.winStopInput.Blur()
 }
 
@@ -354,6 +423,8 @@ func (m *wizardModel) focusWindowField() tea.Cmd {
 	case 1:
 		return m.winPathInput.Focus()
 	case 2:
+		return m.winEnvInput.Focus()
+	case 3:
 		return m.winStopInput.Focus()
 	}
 	return nil
@@ -368,14 +439,21 @@ func (m *wizardModel) saveWindowEdit() (*wizardModel, tea.Cmd) {
 	}
 	if len(m.winPanes) == 0 {
 		m.err = "add at least one pane before saving"
-		m.winFocus = 3
+		m.winFocus = 4
 		return m, nil
+	}
+	winEnv := strings.TrimSpace(m.winEnvInput.Value())
+	if _, errStr := parseEnvAssignments(winEnv); errStr != "" {
+		m.err = "window env: " + errStr
+		m.winFocus = 2
+		return m, m.winEnvInput.Focus()
 	}
 	draft := wizardWindowDraft{
 		name:   name,
 		path:   strings.TrimSpace(m.winPathInput.Value()),
 		onStop: strings.TrimSpace(m.winStopInput.Value()),
-		panes:  append([]string{}, m.winPanes...),
+		env:    winEnv,
+		panes:  append([]wizardPaneDraft{}, m.winPanes...),
 	}
 	if m.winIsNew {
 		m.windows = append(m.windows, draft)
@@ -392,12 +470,31 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	if m.addingPane {
 		if key, ok := msg.(tea.KeyMsg); ok {
 			switch key.String() {
+			case "tab", "shift+tab":
+				m.paneEnvFocus = !m.paneEnvFocus
+				if m.paneEnvFocus {
+					m.paneInput.Blur()
+					return m, m.paneEnvInput.Focus()
+				}
+				m.paneEnvInput.Blur()
+				return m, m.paneInput.Focus()
 			case "enter":
-				val := strings.TrimSpace(m.paneInput.Value())
+				draft := wizardPaneDraft{
+					command: strings.TrimSpace(m.paneInput.Value()),
+					env:     strings.TrimSpace(m.paneEnvInput.Value()),
+				}
+				if _, errStr := parseEnvAssignments(draft.env); errStr != "" {
+					m.err = "pane env: " + errStr
+					m.paneEnvFocus = true
+					m.paneInput.Blur()
+					return m, m.paneEnvInput.Focus()
+				}
+				m.err = ""
 				if m.paneEditIndex >= 0 {
-					m.winPanes[m.paneEditIndex] = val
+					draft.path = m.winPanes[m.paneEditIndex].path
+					m.winPanes[m.paneEditIndex] = draft
 				} else {
-					m.winPanes = append(m.winPanes, val)
+					m.winPanes = append(m.winPanes, draft)
 					m.paneCursor = len(m.winPanes) - 1
 				}
 				m.addingPane = false
@@ -408,7 +505,11 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 			}
 		}
 		var cmd tea.Cmd
-		m.paneInput, cmd = m.paneInput.Update(msg)
+		if m.paneEnvFocus {
+			m.paneEnvInput, cmd = m.paneEnvInput.Update(msg)
+		} else {
+			m.paneInput, cmd = m.paneInput.Update(msg)
+		}
 		return m, cmd
 	}
 
@@ -421,15 +522,15 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 			return m.saveWindowEdit()
 		case "tab":
 			m.blurWindowFields()
-			m.winFocus = (m.winFocus + 1) % 4
+			m.winFocus = (m.winFocus + 1) % 5
 			return m, m.focusWindowField()
 		case "shift+tab":
 			m.blurWindowFields()
-			m.winFocus = (m.winFocus - 1 + 4) % 4
+			m.winFocus = (m.winFocus - 1 + 5) % 5
 			return m, m.focusWindowField()
 		}
 
-		if m.winFocus == 3 {
+		if m.winFocus == 4 {
 			switch key.String() {
 			case "up", "ctrl+k":
 				if m.paneCursor > 0 {
@@ -441,14 +542,18 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 				}
 			case "ctrl+a":
 				m.addingPane = true
+				m.paneEnvFocus = false
 				m.paneEditIndex = -1
 				m.paneInput = newSettingsInput("")
+				m.paneEnvInput = newSettingsInput("")
 				m.paneInput.Focus()
 			case "enter":
 				if len(m.winPanes) > 0 {
 					m.addingPane = true
+					m.paneEnvFocus = false
 					m.paneEditIndex = m.paneCursor
-					m.paneInput = newSettingsInput(m.winPanes[m.paneCursor])
+					m.paneInput = newSettingsInput(m.winPanes[m.paneCursor].command)
+					m.paneEnvInput = newSettingsInput(m.winPanes[m.paneCursor].env)
 					m.paneInput.Focus()
 				}
 			case "ctrl+d", "ctrl+x":
@@ -470,6 +575,8 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	case 1:
 		m.winPathInput, cmd = m.winPathInput.Update(msg)
 	case 2:
+		m.winEnvInput, cmd = m.winEnvInput.Update(msg)
+	case 3:
 		m.winStopInput, cmd = m.winStopInput.Update(msg)
 	}
 	return m, cmd
@@ -561,9 +668,11 @@ func (m *wizardModel) buildRawConfig() map[string]interface{} {
 	for _, d := range m.windows {
 		var panes []Pane
 		for _, p := range d.panes {
-			panes = append(panes, Pane{Command: p})
+			paneEnv, _ := parseEnvAssignments(p.env)
+			panes = append(panes, Pane{Command: p.command, Path: p.path, Env: paneEnv})
 		}
-		windows = append(windows, Window{Name: d.name, Path: d.path, OnStop: d.onStop, Panes: panes})
+		winEnv, _ := parseEnvAssignments(d.env)
+		windows = append(windows, Window{Name: d.name, Path: d.path, OnStop: d.onStop, Env: winEnv, Panes: panes})
 	}
 	projectPath := strings.TrimSpace(m.pathInput.Value())
 	if projectPath == "" {
@@ -575,15 +684,25 @@ func (m *wizardModel) buildRawConfig() map[string]interface{} {
 		displayName = strings.ToUpper(m.alias)
 	}
 
+	projectEnv, _ := parseEnvAssignments(m.envInput.Value())
+
 	raw := map[string]interface{}{
 		"project_name_display": displayName,
 		"project_path":         projectPath,
 		"windows":              windows,
 		"teardown":             append([]string{}, m.teardown...),
 	}
+	if len(projectEnv) > 0 {
+		raw["env"] = projectEnv
+	}
 	if m.editing {
 		if existing, err := loadConfigRawErr(m.alias); err == nil {
 			for k, v := range existing {
+				// "env" is fully owned by the wizard's env step: clearing the
+				// field must clear it in the file, not resurrect the old map.
+				if k == "env" {
+					continue
+				}
 				if _, known := raw[k]; !known {
 					raw[k] = v
 				}
@@ -655,6 +774,8 @@ func (m *wizardModel) viewMain() string {
 		return m.viewSimpleField("Project title", "title", m.titleInput, "enter continue   esc back")
 	case stepPath:
 		return m.viewSimpleField("Project path", fmt.Sprintf("path, relative to %s", settings.BaseDir), m.pathInput, "enter continue   esc back")
+	case stepEnv:
+		return m.viewSimpleField("Workspace environment", "KEY=value KEY2='two words' — exported in every pane of every window", m.envInput, "enter continue   esc back")
 	case stepWindows:
 		return m.viewWindowsList()
 	case stepTeardown:
@@ -723,7 +844,7 @@ func renderWindowBox(index int, w wizardWindowDraft, width, height int) string {
 		height = 3
 	}
 	header := accentStyle.Render(fmt.Sprintf("%d:%s", index, w.name))
-	panes := renderPaneGrid(w.panes, width, height-1)
+	panes := renderPaneGrid(paneCommands(w.panes), width, height-1)
 	return lipgloss.NewStyle().Width(width).Render(header) + "\n" + panes
 }
 
@@ -871,11 +992,12 @@ func (m *wizardModel) viewWindowEdit() string {
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("%-26s %s\n", label(0, "name"), m.winNameInput.View()))
 	b.WriteString(fmt.Sprintf("%-26s %s\n", label(1, "path (optional)"), m.winPathInput.View()))
-	b.WriteString(fmt.Sprintf("%-26s %s\n", label(2, "on_stop (optional)"), m.winStopInput.View()))
+	b.WriteString(fmt.Sprintf("%-26s %s\n", label(2, "env (KEY=value ...)"), m.winEnvInput.View()))
+	b.WriteString(fmt.Sprintf("%-26s %s\n", label(3, "on_stop (optional)"), m.winStopInput.View()))
 	b.WriteString("\n")
 
 	panesLabel := "  panes"
-	if m.winFocus == 3 {
+	if m.winFocus == 4 {
 		panesLabel = focusedFieldLabel.Render("▸ panes")
 	}
 	b.WriteString(panesLabel + "\n")
@@ -884,11 +1006,14 @@ func (m *wizardModel) viewWindowEdit() string {
 	}
 	for i, p := range m.winPanes {
 		cursor := "    "
-		text := p
+		text := p.command
 		if text == "" {
 			text = "(shell)"
 		}
-		if m.winFocus == 3 && i == m.paneCursor && !m.addingPane {
+		if p.env != "" {
+			text += "  [" + p.env + "]"
+		}
+		if m.winFocus == 4 && i == m.paneCursor && !m.addingPane {
 			cursor = accentStyle.Render("  ▸ ")
 			text = accentStyle.Render(text)
 		} else {
@@ -897,7 +1022,14 @@ func (m *wizardModel) viewWindowEdit() string {
 		b.WriteString(cursor + text + "\n")
 	}
 	if m.addingPane {
-		b.WriteString("    " + m.paneInput.View() + "\n")
+		paneFieldLabel := func(focused bool, text string) string {
+			if focused {
+				return focusedFieldLabel.Render("▸ " + text)
+			}
+			return "  " + fieldLabel.Render(text)
+		}
+		b.WriteString("    " + paneFieldLabel(!m.paneEnvFocus, "command") + " " + m.paneInput.View() + "\n")
+		b.WriteString("    " + paneFieldLabel(m.paneEnvFocus, "env    ") + " " + m.paneEnvInput.View() + "\n")
 	}
 	b.WriteString("\n")
 	if m.err != "" {
@@ -907,8 +1039,8 @@ func (m *wizardModel) viewWindowEdit() string {
 	help := "tab next field   ^S save window   esc cancel"
 	switch {
 	case m.addingPane:
-		help = "enter confirm   esc cancel"
-	case m.winFocus == 3:
+		help = "tab command/env   enter confirm   esc cancel"
+	case m.winFocus == 4:
 		help = "^A add pane   enter edit pane   ^D delete pane   tab next field   ^S save window   esc cancel"
 	}
 	b.WriteString(subtleStyle.Render(help))
@@ -962,7 +1094,11 @@ func (m *wizardModel) viewReview() string {
 	}
 	b.WriteString(fmt.Sprintf("alias:  %s\n", m.alias))
 	b.WriteString(fmt.Sprintf("title:  %s\n", title))
-	b.WriteString(fmt.Sprintf("path:   %s\n\n", path))
+	b.WriteString(fmt.Sprintf("path:   %s\n", path))
+	if env := strings.TrimSpace(m.envInput.Value()); env != "" {
+		b.WriteString(fmt.Sprintf("env:    %s\n", env))
+	}
+	b.WriteString("\n")
 
 	b.WriteString(fmt.Sprintf("windows (%d):\n", len(m.windows)))
 	for wi, w := range m.windows {
@@ -975,14 +1111,20 @@ func (m *wizardModel) viewReview() string {
 			line += subtleStyle.Render("  (on_stop: " + w.onStop + ")")
 		}
 		b.WriteString(line + "\n")
+		if w.env != "" {
+			b.WriteString(subtleStyle.Render(fmt.Sprintf("  %s   env: %s", cont, w.env)) + "\n")
+		}
 		for pi, p := range w.panes {
 			pBranch := "├─"
 			if pi == len(w.panes)-1 {
 				pBranch = "└─"
 			}
-			text := p
+			text := p.command
 			if text == "" {
 				text = "(shell)"
+			}
+			if p.env != "" {
+				text += "  [" + p.env + "]"
 			}
 			b.WriteString(subtleStyle.Render(fmt.Sprintf("  %s%s %s", cont, pBranch, text)) + "\n")
 		}

@@ -171,3 +171,59 @@ func TestFirstExisting(t *testing.T) {
 		t.Errorf("firstExisting = %q, want empty", got)
 	}
 }
+
+func TestParseEnvAssignments(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    map[string]string
+		wantErr bool
+	}{
+		{"", nil, false},
+		{"   ", nil, false},
+		{"FOO=bar", map[string]string{"FOO": "bar"}, false},
+		{"A=1 B=2", map[string]string{"A": "1", "B": "2"}, false},
+		{"MSG='has space'", map[string]string{"MSG": "has space"}, false},
+		{"EMPTY=", map[string]string{"EMPTY": ""}, false},
+		{"novalue", nil, true},
+		{"=novalue", nil, true},
+	}
+	for _, tc := range cases {
+		got, errStr := parseEnvAssignments(tc.in)
+		if (errStr != "") != tc.wantErr {
+			t.Errorf("parseEnvAssignments(%q) err = %q, wantErr %v", tc.in, errStr, tc.wantErr)
+			continue
+		}
+		if tc.wantErr {
+			continue
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("parseEnvAssignments(%q) = %v, want %v", tc.in, got, tc.want)
+			continue
+		}
+		for k, v := range tc.want {
+			if got[k] != v {
+				t.Errorf("parseEnvAssignments(%q)[%q] = %q, want %q", tc.in, k, got[k], v)
+			}
+		}
+	}
+}
+
+func TestFormatEnvAssignmentsRoundTrips(t *testing.T) {
+	env := map[string]string{"ZEBRA": "1", "APPLE": "two words"}
+	line := formatEnvAssignments(env)
+	if want := `APPLE='two words' ZEBRA=1`; line != want {
+		t.Fatalf("formatEnvAssignments() = %q, want %q", line, want)
+	}
+	back, errStr := parseEnvAssignments(line)
+	if errStr != "" {
+		t.Fatalf("parseEnvAssignments(%q) err = %q", line, errStr)
+	}
+	for k, v := range env {
+		if back[k] != v {
+			t.Errorf("round trip %q = %q, want %q", k, back[k], v)
+		}
+	}
+	if formatEnvAssignments(nil) != "" {
+		t.Error("formatEnvAssignments(nil) should be empty")
+	}
+}

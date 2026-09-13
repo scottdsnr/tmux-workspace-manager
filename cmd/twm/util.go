@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -82,6 +83,88 @@ func resolveWindowDir(projectDir string, win Window) string {
 // path against the project directory.
 func resolvePaneDir(windowDir string, pane Pane) string {
 	return resolveRelativeDir(windowDir, pane.Path)
+}
+
+// resolvePaneEnv merges the env maps that apply to a pane, from widest to
+// narrowest scope: workspace-level env, then the window's, then the pane's
+// own. A narrower scope overrides the same key from a wider one; keys it
+// doesn't mention are inherited. Returns nil when nothing is set anywhere.
+func resolvePaneEnv(configEnv, windowEnv, paneEnv map[string]string) map[string]string {
+	if len(configEnv) == 0 && len(windowEnv) == 0 && len(paneEnv) == 0 {
+		return nil
+	}
+	merged := make(map[string]string, len(configEnv)+len(windowEnv)+len(paneEnv))
+	for _, src := range []map[string]string{configEnv, windowEnv, paneEnv} {
+		for k, v := range src {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+// parseEnvAssignments turns a single line of "KEY=value KEY2='two words'"
+// assignments — the shape both wizards ask for env in — into a map. It
+// returns an error string (empty when fine) describing the first malformed
+// token, so callers can show it inline rather than silently dropping input.
+func parseEnvAssignments(line string) (map[string]string, string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil, ""
+	}
+	tokens, err := shlexSplit(line)
+	if err != nil {
+		return nil, err.Error()
+	}
+	env := map[string]string{}
+	for _, tok := range tokens {
+		key, val, found := strings.Cut(tok, "=")
+		if !found || key == "" {
+			return nil, fmt.Sprintf("'%s' is not a KEY=value assignment", tok)
+		}
+		env[key] = val
+	}
+	if len(env) == 0 {
+		return nil, ""
+	}
+	return env, ""
+}
+
+// formatEnvAssignments renders an env map back into the single-line form
+// parseEnvAssignments accepts, sorted so editing a profile round-trips
+// deterministically.
+func formatEnvAssignments(env map[string]string) string {
+	if len(env) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+shellQuote(env[k]))
+	}
+	return strings.Join(parts, " ")
+}
+
+// stringMapFromRaw converts an "env" value freshly decoded from YAML into a
+// typed map, skipping non-string values (validateConfig reports those).
+func stringMapFromRaw(v interface{}) map[string]string {
+	m, ok := v.(map[string]interface{})
+	if !ok || len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, val := range m {
+		if s, ok := val.(string); ok {
+			out[k] = s
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // shlexSplit is a small approximation of Python's shlex.split, sufficient
