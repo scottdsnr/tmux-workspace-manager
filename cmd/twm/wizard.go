@@ -64,56 +64,51 @@ func statusText(e workspaceEntry) string {
 	return fmt.Sprintf("ACTIVE (%s, %d/%d windows)", state, e.windowsAlive, e.windowsTotal)
 }
 
-// gatherWorkspaceEntries reads every profile under configDir and returns a
-// summary of each, sorted by alias. It performs no output side effects, so
-// it's safe to call from both the plain and TUI paths.
+// gatherWorkspaceEntries reads every profile out of the consolidated
+// workspaces file (plus any not-yet-migrated standalone profile) and
+// returns a summary of each, sorted by alias. It performs no output side
+// effects, so it's safe to call from both the plain and TUI paths.
 func gatherWorkspaceEntries() []workspaceEntry {
-	entries, err := os.ReadDir(configDir)
-	if err != nil || len(entries) == 0 {
-		return nil
+	doc, err := loadWorkspacesDoc()
+	if err != nil {
+		return []workspaceEntry{{alias: "workspaces.yml", hasError: true, errMsg: err.Error()}}
 	}
 
-	aliases := map[string]string{} // alias -> filename
 	var names []string
-	for _, e := range entries {
-		name := e.Name()
-		var alias string
-		switch {
-		case strings.HasSuffix(name, ".yml"):
-			alias = strings.TrimSuffix(name, ".yml")
-			if _, exists := aliases[alias]; !exists {
-				names = append(names, alias)
-			}
-			aliases[alias] = name // .yml always takes priority if both exist
-		case strings.HasSuffix(name, ".json"):
-			alias = strings.TrimSuffix(name, ".json")
-			if _, exists := aliases[alias]; exists {
-				continue
-			}
-			aliases[alias] = name
+	for alias := range doc {
+		names = append(names, alias)
+	}
+	legacy := legacyWorkspaceFiles()
+	for alias := range legacy {
+		if _, ok := doc[alias]; !ok {
 			names = append(names, alias)
-		default:
-			continue
 		}
 	}
 	sort.Strings(names)
 
 	var results []workspaceEntry
 	for _, alias := range names {
-		filename := aliases[alias]
-		data, err := os.ReadFile(filepath.Join(configDir, filename))
-		if err != nil {
-			results = append(results, workspaceEntry{alias: alias, hasError: true, errMsg: err.Error()})
-			continue
-		}
-		var cfg map[string]interface{}
-		if err := yaml.Unmarshal(data, &cfg); err != nil {
-			results = append(results, workspaceEntry{alias: alias, hasError: true, errMsg: err.Error()})
-			continue
+		cfg, ok := doc[alias]
+		if !ok {
+			// Not migrated yet: read straight from its standalone file so it
+			// still shows up in `list`, but flag it so the user knows to run
+			// `upgrade`.
+			data, err := os.ReadFile(filepath.Join(configDir, legacy[alias]))
+			if err != nil {
+				results = append(results, workspaceEntry{alias: alias, hasError: true, errMsg: err.Error()})
+				continue
+			}
+			if err := yaml.Unmarshal(data, &cfg); err != nil {
+				results = append(results, workspaceEntry{alias: alias, hasError: true, errMsg: err.Error()})
+				continue
+			}
 		}
 		displayName := "Unnamed Project"
 		if dn, ok := cfg["project_name_display"].(string); ok && dn != "" {
 			displayName = dn
+		}
+		if _, migrated := doc[alias]; !migrated {
+			displayName += " (run `upgrade` to migrate)"
 		}
 		entry := workspaceEntry{alias: alias, displayName: displayName, active: hasSession(alias)}
 		if entry.active {
@@ -131,7 +126,7 @@ func gatherWorkspaceEntries() []workspaceEntry {
 func listWorkspaces() {
 	results := gatherWorkspaceEntries()
 	if len(results) == 0 {
-		fmt.Printf("%sNo workspaces found. Create .yml profiles inside: %s\n", sym("info"), configDir)
+		fmt.Printf("%sNo workspaces found. Create one with '%s create <alias>', or add it to %s\n", sym("info"), progName(), workspacesPath)
 		return
 	}
 
@@ -171,11 +166,11 @@ func padRight(s string, w int) string {
 }
 
 func editWorkspaceRaw(alias string) {
-	path := findConfigPath(alias)
-	if path == "" {
-		fatal("%sWorkspace alias '%s' does not exist.", sym("error"), alias)
+	if _, err := loadConfigRawErr(alias); err != nil {
+		fatal("%s%s", sym("error"), err)
 	}
-	openInEditor(path)
+	fmt.Printf("%sAll workspaces share one file — look for the '%s:' section.\n", sym("info"), alias)
+	openInEditor(workspacesPath)
 }
 
 func editWorkspaceInteractive(alias string) {
@@ -476,5 +471,5 @@ func createWorkspaceWizard(presetAlias string) {
 	if err != nil {
 		fatal("%sFailed to save %s: %v", sym("error"), alias, err)
 	}
-	fmt.Printf("\n%sConfiguration saved to: %s\n", sym("check"), savedPath)
+	fmt.Printf("\n%sWorkspace '%s' saved to: %s\n", sym("check"), alias, savedPath)
 }

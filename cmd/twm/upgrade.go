@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -27,8 +26,10 @@ func loadYAMLNode(path string) (*yaml.Node, error) {
 	return &doc, nil
 }
 
-// upgradeConfigs converts legacy JSON profiles/settings under configDir to
-// YAML in place.
+// upgradeConfigs converts legacy JSON settings to YAML, and folds any
+// standalone <alias>.yml/<alias>.json workspace profile under configDir
+// into the consolidated workspaces file — both in place, with the
+// originals backed up as .bak.
 func upgradeConfigs(dry bool) {
 	if _, err := os.Stat(configDir); err != nil {
 		fmt.Printf("%sNo config directory found at %s; nothing to upgrade.\n", sym("info"), configDir)
@@ -69,50 +70,66 @@ func upgradeConfigs(dry bool) {
 		break
 	}
 
-	// Workspace profiles: every top-level <alias>.json, skipping a flat
-	// settings.json (handled above, never a real workspace alias).
-	entries, _ := os.ReadDir(configDir)
-	var filenames []string
-	for _, e := range entries {
-		filenames = append(filenames, e.Name())
+	// Workspace profiles: fold every standalone <alias>.yml/<alias>.json
+	// left over from before workspaces were consolidated into one file.
+	legacy := legacyWorkspaceFiles()
+	var aliases []string
+	for alias := range legacy {
+		aliases = append(aliases, alias)
 	}
-	sort.Strings(filenames)
+	sort.Strings(aliases)
 
-	for _, filename := range filenames {
-		if filename == "settings.json" || !strings.HasSuffix(filename, ".json") {
-			continue
-		}
+	doc, err := loadWorkspacesDoc()
+	if err != nil {
+		errPrint("%sFailed to read %s: %v", sym("error"), workspacesPath, err)
+		doc = workspacesDoc{}
+	}
+
+	var toBackup []string
+	for _, alias := range aliases {
+		filename := legacy[alias]
 		full := filepath.Join(configDir, filename)
 		if info, err := os.Stat(full); err != nil || info.IsDir() {
 			continue
 		}
-		alias := strings.TrimSuffix(filename, ".json")
-		ymlPath, _ := configPaths(alias)
-		if _, err := os.Stat(ymlPath); err == nil {
-			fmt.Printf("%s%s already exists; leaving %s untouched.\n", sym("warn"), ymlPath, full)
+		if _, exists := doc[alias]; exists {
+			fmt.Printf("%s'%s' already exists in %s; leaving %s untouched.\n", sym("warn"), alias, workspacesPath, full)
 			skipped++
 			continue
 		}
-		node, err := loadYAMLNode(full)
+		data, err := os.ReadFile(full)
 		if err != nil {
+			errPrint("%sFailed to read %s: %v", sym("error"), full, err)
+			continue
+		}
+		var raw map[string]interface{}
+		if err := yaml.Unmarshal(data, &raw); err != nil {
 			errPrint("%sFailed to parse %s: %v", sym("error"), full, err)
 			continue
 		}
 		if dry {
-			fmt.Printf("   %s[dry-run] would convert %s -> %s\n", sym("dry"), full, ymlPath)
+			fmt.Printf("   %s[dry-run] would merge '%s' from %s into %s\n", sym("dry"), alias, full, workspacesPath)
 		} else {
-			data, _ := yaml.Marshal(node)
-			os.MkdirAll(configDir, 0755)
-			os.WriteFile(ymlPath, data, 0644)
-			backup := full + ".bak"
-			os.Rename(full, backup)
-			fmt.Printf("%sConverted '%s': %s -> %s (backup: %s)\n", sym("check"), alias, full, ymlPath, backup)
+			doc[alias] = raw
+			toBackup = append(toBackup, full)
+			fmt.Printf("%sMerged '%s' from %s into %s\n", sym("check"), alias, full, workspacesPath)
 		}
 		converted++
 	}
 
+	if !dry && len(toBackup) > 0 {
+		if err := saveWorkspacesDoc(doc); err != nil {
+			fatal("%sFailed to write %s: %v", sym("error"), workspacesPath, err)
+		}
+		for _, full := range toBackup {
+			backup := full + ".bak"
+			os.Rename(full, backup)
+			fmt.Printf("   %sbacked up %s -> %s\n", sym("info"), full, backup)
+		}
+	}
+
 	if converted == 0 && skipped == 0 {
-		fmt.Printf("%sNo legacy JSON configs found under %s; nothing to upgrade.\n", sym("info"), configDir)
+		fmt.Printf("%sNo legacy workspace profiles found under %s; nothing to upgrade.\n", sym("info"), configDir)
 	} else if dry {
 		fmt.Printf("\n%sDry run: %d would be converted, %d would be skipped.\n", sym("info"), converted, skipped)
 	} else {

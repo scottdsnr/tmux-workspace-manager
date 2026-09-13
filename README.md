@@ -56,17 +56,17 @@ with no TUI involved.
 |--------------------------------|---------------------------------------------------------------------|
 | *(no arguments)*                | Open the interactive dashboard (a TTY); plain usage otherwise.     |
 | `list`                          | Dashboard on a TTY; plain list of profiles and status otherwise.   |
-| `create [alias]`                | Interactive wizard (or piped-stdin wizard) that writes a new `<alias>.yml` profile. |
+| `create [alias]`                | Interactive wizard (or piped-stdin wizard) that adds a new profile to `workspaces.yml`. |
 | `up <alias>`                    | Build (or attach to) the tmux session for a profile.                |
 | `up <alias> --dry-run`          | Print the tmux/teardown commands without running them.              |
 | `down <alias>`                  | Gracefully stop panes, run teardown, then kill the session.         |
 | `down <alias> -y`               | Same, without the confirmation prompt.                              |
 | `down <alias> --dry-run`        | Preview what `down` would do without touching the session.          |
 | `edit <alias>`                  | Interactive wizard to modify an existing profile.                   |
-| `edit <alias> --raw`            | Open the profile's YAML directly in `$EDITOR`.                      |
+| `edit <alias> --raw`            | Open `workspaces.yml` directly in `$EDITOR` (all profiles, not just this one). |
 | `validate <alias>`              | Check a profile's YAML for structural problems.                     |
 | `config`                        | Interactive settings form on a TTY; opens `$EDITOR` otherwise (or with `--raw`). |
-| `upgrade`                       | Convert legacy `.json` profiles/settings to `.yml` in place.        |
+| `upgrade`                       | Fold legacy per-alias `.yml`/`.json` profiles into `workspaces.yml`, and convert legacy `.json` settings to `.yml`. |
 | `upgrade --dry-run`             | Preview what `upgrade` would convert without changing anything.     |
 | `update`                        | Check GitHub for a newer release and install it in place.           |
 | `update --dry-run`              | Check for a newer release without installing it.                    |
@@ -89,34 +89,35 @@ re-running `go install github.com/scottdsnr/tmux-workspace-manager/cmd/twm@lates
 
 ## Profiles
 
-Profiles live in `~/.config/tmux-workspaces/<alias>.yml`. Each one describes
-a tmux session named after its alias:
+Every profile lives together in `~/.config/tmux-workspaces/workspaces.yml`,
+keyed by alias. Each entry describes a tmux session named after its alias:
 
 ```yaml
-project_name_display: Tabs
-project_path: ~/code/tabs
-windows:
-  - name: AI
-    panes:
-      - command: claude
-    on_stop: /exit
-  - name: Docker-Dev
-    path: docker
-    panes:
-      - command: ./vendor/bin/sail up -d
-      - command: ""
-  - name: App
-    layout: main-vertical
-    panes:
-      - command: npm run dev
-        path: frontend
-        env:
-          NODE_ENV: development
-          PORT: "3000"
-      - command: tail -f storage/logs/laravel.log
-        path: backend
-teardown:
-  - ./vendor/bin/sail down
+tabs:
+  project_name_display: Tabs
+  project_path: ~/code/tabs
+  windows:
+    - name: AI
+      panes:
+        - command: claude
+      on_stop: /exit
+    - name: Docker-Dev
+      path: docker
+      panes:
+        - command: ./vendor/bin/sail up -d
+        - command: ""
+    - name: App
+      layout: main-vertical
+      panes:
+        - command: npm run dev
+          path: frontend
+          env:
+            NODE_ENV: development
+            PORT: "3000"
+        - command: tail -f storage/logs/laravel.log
+          path: backend
+  teardown:
+    - ./vendor/bin/sail down
 ```
 
 - **`project_path`** — the project's working directory. Relative paths are
@@ -148,23 +149,25 @@ teardown:
   panes are signaled to stop, before the session is killed. A single string
   is also accepted.
 
-### Migrating from JSON
+### Migrating older installs
 
-Older profiles written as `<alias>.json` (and `.settings/settings.json`) are
-still read automatically — valid JSON is valid YAML. Run:
+Versions before profiles were consolidated wrote one `<alias>.yml` (or
+`<alias>.json`) file per workspace. `twm` still finds those, but only well
+enough to tell you to migrate — commands report which alias needs it. Run:
 
 ```sh
-twm upgrade            # convert every legacy .json config to .yml
+twm upgrade            # fold standalone profiles into workspaces.yml
 twm upgrade --dry-run  # preview what would be converted first
 ```
 
-This converts every `<alias>.json` profile and the settings file to `.yml` in
-place, renaming each original to `<alias>.json.bak` (never deleted, so
-nothing is lost). It also cleans up a flat `settings.json` sitting directly
-in `~/.config/tmux-workspaces/` from older installs, moving it into
-`.settings/settings.yml` where the tool actually reads it — if you've had one
-sitting there unread, this is the fix. Already-converted aliases are skipped,
-so it's safe to run more than once.
+This merges every standalone `<alias>.yml`/`<alias>.json` profile into
+`workspaces.yml`, renaming each original to `<alias>.yml.bak` (never
+deleted, so nothing is lost) — an alias already present in `workspaces.yml`
+is left untouched rather than overwritten. The same run also converts a
+legacy `.json` settings file to `.yml`, including a flat `settings.json`
+sitting directly in `~/.config/tmux-workspaces/` from older installs, moving
+it into `.settings/settings.yml` where the tool actually reads it. Already
+migrated aliases are skipped, so it's safe to run more than once.
 
 `down` sends Ctrl-C to every pane without an `on_stop` command, waits briefly,
 runs `teardown`, then kills the session. It never interrupts the pane you're

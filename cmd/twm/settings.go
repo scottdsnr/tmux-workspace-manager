@@ -12,6 +12,7 @@ var (
 	configDir          string
 	settingsPath       string
 	legacySettingsPath string
+	workspacesPath     string
 )
 
 func init() {
@@ -20,14 +21,18 @@ func init() {
 		home = "."
 	}
 	configDir = filepath.Join(home, ".config", "tmux-workspaces")
-	// Settings live in their own subdirectory, not alongside the flat
-	// <alias>.yml workspace profiles, so a settings filename can never
-	// collide with a workspace alias.
+	// Settings live in their own subdirectory, not alongside the
+	// workspaces file, so a settings filename can never collide with a
+	// workspace alias.
 	settingsPath = filepath.Join(configDir, ".settings", "settings.yml")
 	// Pre-YAML installs wrote settings.json / <alias>.json. Both are still
 	// read transparently (valid JSON parses fine as YAML); every write goes
 	// to the new .yml path, so profiles migrate the first time they're saved.
 	legacySettingsPath = filepath.Join(configDir, ".settings", "settings.json")
+	// All workspace profiles live together in one file; standalone
+	// <alias>.yml/<alias>.json files predate this and are folded in by
+	// `upgrade`.
+	workspacesPath = filepath.Join(configDir, "workspaces.yml")
 }
 
 type Settings struct {

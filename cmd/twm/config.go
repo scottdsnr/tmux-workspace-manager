@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -58,14 +59,117 @@ type Config struct {
 	Teardown           Teardown `yaml:"teardown,omitempty"`
 }
 
-// configPaths returns (yml_path, legacy_json_path) for an alias.
-func configPaths(alias string) (string, string) {
-	return filepath.Join(configDir, alias+".yml"), filepath.Join(configDir, alias+".json")
+// workspacesDoc is the consolidated on-disk shape: every workspace alias
+// mapped to its profile (the same generic shape a single <alias>.yml used
+// to hold).
+type workspacesDoc map[string]map[string]interface{}
+
+// legacyWorkspaceFiles returns alias -> filename for every pre-consolidation
+// standalone profile still sitting in configDir (skipping workspacesPath
+// itself, the flat legacy settings.json, and anything that isn't a
+// top-level .yml/.json file). .yml takes priority over .json per alias,
+// matching the old findConfigPath lookup order.
+func legacyWorkspaceFiles() map[string]string {
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		return nil
+	}
+	files := map[string]string{}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == filepath.Base(workspacesPath) || name == "settings.json" {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(name, ".yml"):
+			files[strings.TrimSuffix(name, ".yml")] = name
+		case strings.HasSuffix(name, ".json"):
+			alias := strings.TrimSuffix(name, ".json")
+			if _, exists := files[alias]; !exists {
+				files[alias] = name
+			}
+		}
+	}
+	return files
 }
 
+// loadWorkspacesDoc reads the consolidated workspaces file. A missing file
+// is not an error — it just means no workspace has been saved yet (or
+// existing per-alias profiles haven't been migrated with `upgrade`).
+func loadWorkspacesDoc() (workspacesDoc, error) {
+	doc := workspacesDoc{}
+	data, err := os.ReadFile(workspacesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return doc, nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", workspacesPath, err)
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", workspacesPath, err)
+	}
+	if doc == nil {
+		doc = workspacesDoc{}
+	}
+	return doc, nil
+}
+
+// saveWorkspacesDoc writes doc back to workspacesPath, aliases sorted for a
+// deterministic, diff-friendly file.
+func saveWorkspacesDoc(doc workspacesDoc) error {
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	aliases := make([]string, 0, len(doc))
+	for alias := range doc {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+
+	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, alias := range aliases {
+		keyNode := &yaml.Node{}
+		if err := keyNode.Encode(alias); err != nil {
+			return err
+		}
+		valNode, err := encodeOrdered(doc[alias], topLevelOrder)
+		if err != nil {
+			return err
+		}
+		root.Content = append(root.Content, keyNode, valNode)
+	}
+	data, err := yaml.Marshal(root)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(workspacesPath, data, 0644)
+}
+
+// findConfigPath reports whether alias exists in the consolidated
+// workspaces file, returning workspacesPath if so (the historical callers
+// of this function only ever checked for "" vs. a real path).
 func findConfigPath(alias string) string {
-	ymlPath, jsonPath := configPaths(alias)
-	return firstExisting(ymlPath, jsonPath)
+	doc, err := loadWorkspacesDoc()
+	if err != nil {
+		return ""
+	}
+	if _, ok := doc[alias]; ok {
+		return workspacesPath
+	}
+	return ""
+}
+
+// notMigratedErr builds a helpful error when alias isn't in the
+// consolidated file but a pre-consolidation standalone profile for it still
+// is, pointing the user at `upgrade` instead of just saying "not found".
+func notMigratedErr(alias string) error {
+	if _, ok := legacyWorkspaceFiles()[alias]; ok {
+		return fmt.Errorf("workspace alias '%s' hasn't been migrated to %s yet — run '%s upgrade'", alias, workspacesPath, progName())
+	}
+	return fmt.Errorf("workspace alias '%s' does not exist", alias)
 }
 
 // loadConfigRaw loads a workspace profile as a generic map, for validation
@@ -77,31 +181,20 @@ func loadConfigRaw(alias string) (map[string]interface{}, string) {
 	if err != nil {
 		fatal("%s%s", sym("error"), err)
 	}
-	path, _ := configPaths(alias)
-	if p := findConfigPath(alias); p != "" {
-		path = p
-	}
-	return raw, path
+	return raw, workspacesPath
 }
 
 // loadConfigRawErr is the non-fatal counterpart to loadConfigRaw, for
 // callers (TUI screens) that need to report failure themselves rather than
 // exiting the whole process.
 func loadConfigRawErr(alias string) (map[string]interface{}, error) {
-	path := findConfigPath(alias)
-	if path == "" {
-		return nil, fmt.Errorf("workspace alias '%s' does not exist", alias)
-	}
-	data, err := os.ReadFile(path)
+	doc, err := loadWorkspacesDoc()
 	if err != nil {
-		return nil, fmt.Errorf("failed to read %s: %w", path, err)
+		return nil, err
 	}
-	var raw map[string]interface{}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
-	}
-	if raw == nil {
-		raw = map[string]interface{}{}
+	raw, ok := doc[alias]
+	if !ok {
+		return nil, notMigratedErr(alias)
 	}
 	return raw, nil
 }
@@ -117,45 +210,41 @@ func loadConfigTyped(alias string) Config {
 	return cfg
 }
 
-// loadConfigTypedErr is the non-fatal counterpart to loadConfigTyped.
+// loadConfigTypedErr is the non-fatal counterpart to loadConfigTyped. It
+// re-marshals the raw profile map back to YAML and decodes that into
+// Config, reusing the same decode path (custom Teardown unmarshaling
+// included) a standalone file would have gone through.
 func loadConfigTypedErr(alias string) (Config, error) {
-	path := findConfigPath(alias)
-	if path == "" {
-		return Config{}, fmt.Errorf("workspace alias '%s' does not exist", alias)
-	}
-	data, err := os.ReadFile(path)
+	raw, err := loadConfigRawErr(alias)
 	if err != nil {
-		return Config{}, fmt.Errorf("failed to read %s: %w", path, err)
+		return Config{}, err
+	}
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return Config{}, err
 	}
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("failed to parse %s: %w", path, err)
+		return Config{}, fmt.Errorf("failed to parse workspace '%s': %w", alias, err)
 	}
 	return cfg, nil
 }
 
 var topLevelOrder = []string{"project_name_display", "project_path", "windows", "teardown"}
 
-// saveConfigRaw writes a workspace profile as YAML, with known top-level
-// keys in a stable, readable order followed by any unrecognized keys
-// sorted alphabetically.
+// saveConfigRaw writes a workspace profile into the consolidated workspaces
+// file, with known top-level keys in a stable, readable order followed by
+// any unrecognized keys sorted alphabetically.
 func saveConfigRaw(alias string, cfg map[string]interface{}) (string, error) {
-	ymlPath, _ := configPaths(alias)
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return "", err
-	}
-	node, err := encodeOrdered(cfg, topLevelOrder)
+	doc, err := loadWorkspacesDoc()
 	if err != nil {
 		return "", err
 	}
-	data, err := yaml.Marshal(node)
-	if err != nil {
+	doc[alias] = cfg
+	if err := saveWorkspacesDoc(doc); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(ymlPath, data, 0644); err != nil {
-		return "", err
-	}
-	return ymlPath, nil
+	return workspacesPath, nil
 }
 
 func encodeOrdered(m map[string]interface{}, order []string) (*yaml.Node, error) {
@@ -350,7 +439,9 @@ func isStringMap(v interface{}) bool {
 }
 
 // validateAlias returns an error string if alias is unusable as a workspace
-// filename, else "".
+// key, else "". Path separators and ".." are still rejected even though
+// aliases no longer name a file directly — tmux targets it as a literal
+// "alias:window" string, where a slash would be ambiguous.
 func validateAlias(alias string) string {
 	if alias == "" || containsSpace(alias) {
 		return "cannot be empty or contain spaces"
@@ -358,9 +449,7 @@ func validateAlias(alias string) string {
 	if alias == "settings" {
 		return "'settings' is reserved"
 	}
-	candidate, _ := filepath.Abs(filepath.Join(configDir, alias+".yml"))
-	absConfigDir, _ := filepath.Abs(configDir)
-	if filepath.Dir(candidate) != absConfigDir {
+	if strings.ContainsAny(alias, "/\\") || strings.Contains(alias, "..") {
 		return "cannot contain path separators or '..'"
 	}
 	return ""

@@ -168,7 +168,7 @@ func (m dashboardModel) helpView() string {
 func (m dashboardModel) View() string {
 	if len(m.list.Items()) == 0 {
 		return "\n" + panelStyle.Render(
-			subtleStyle.Render(fmt.Sprintf("No workspaces found. Create .yml profiles inside: %s", configDir))+
+			subtleStyle.Render(fmt.Sprintf("No workspaces found. Create one, or add it to %s", workspacesPath))+
 				"\n\n"+subtleStyle.Render("[n] new workspace   [q] quit"),
 		) + "\n"
 	}
