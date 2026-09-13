@@ -69,13 +69,13 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.check-version.outputs.tag }}" -o dist/tmux-workspace .
+          go build -trimpath -ldflags "-s -w -X main.version=${{ needs.check-version.outputs.tag }}" -o dist/twm .
 
       - name: Package
         run: |
           name="tmux-workspace-manager_${{ matrix.goos }}_${{ matrix.goarch }}"
           mkdir -p "out/${name}"
-          cp dist/tmux-workspace "out/${name}/"
+          cp dist/twm "out/${name}/"
           cp README.md "out/${name}/"
           cd out
           tar -czf "${name}.tar.gz" "${name}"

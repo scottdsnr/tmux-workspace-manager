@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installer for tmux-workspace.
+# Installer for twm.
 #
 # Downloads a prebuilt release binary — no Go, Python, or other runtime
 # required on the target machine, just tmux itself.
@@ -10,14 +10,14 @@
 # Environment overrides:
 #   TMUX_WORKSPACE_VERSION      release tag to install (e.g. v1.2.0)        [default: latest]
 #   TMUX_WORKSPACE_INSTALL_DIR  directory to install the binary into        [default: ~/.local/bin]
-#   TMUX_WORKSPACE_BIN_NAME     name of the installed command               [default: tmux-workspace]
+#   TMUX_WORKSPACE_BIN_NAME     name of the installed command               [default: twm]
 
 set -euo pipefail
 
 REPO="scottdsnr/tmux-workspace-manager"
 VERSION="${TMUX_WORKSPACE_VERSION:-latest}"
 INSTALL_DIR="${TMUX_WORKSPACE_INSTALL_DIR:-$HOME/.local/bin}"
-BIN_NAME="${TMUX_WORKSPACE_BIN_NAME:-tmux-workspace}"
+BIN_NAME="${TMUX_WORKSPACE_BIN_NAME:-twm}"
 CONFIG_DIR="$HOME/.config/tmux-workspaces"
 
 info()  { printf '==> %s\n' "$1"; }
@@ -52,7 +52,8 @@ esac
 
 if [ "$VERSION" = "latest" ]; then
     info "Looking up the latest release of ${REPO}..."
-    TAG="$(fetch_stdout "https://api.github.com/repos/${REPO}/releases/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+    RELEASE_JSON="$(fetch_stdout "https://api.github.com/repos/${REPO}/releases/latest")"
+    TAG="$(printf '%s\n' "$RELEASE_JSON" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
     [ -n "$TAG" ] || fail "Could not determine the latest release tag. Set TMUX_WORKSPACE_VERSION to install a specific version."
 else
     TAG="$VERSION"
@@ -91,11 +92,11 @@ info "Extracting..."
 tar -xzf "${WORK_DIR}/${ASSET}" -C "${WORK_DIR}"
 
 EXTRACTED_DIR="${WORK_DIR}/tmux-workspace-manager_${OS}_${ARCH}"
-[ -f "${EXTRACTED_DIR}/tmux-workspace" ] || fail "Downloaded archive did not contain the expected binary."
+[ -f "${EXTRACTED_DIR}/twm" ] || fail "Downloaded archive did not contain the expected binary."
 
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
 TARGET="${INSTALL_DIR}/${BIN_NAME}"
-cp "${EXTRACTED_DIR}/tmux-workspace" "$TARGET"
+cp "${EXTRACTED_DIR}/twm" "$TARGET"
 chmod +x "$TARGET"
 
 info "Installed to ${TARGET}"

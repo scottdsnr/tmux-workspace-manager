@@ -137,9 +137,9 @@ func runSelfUpdate(dry, assumeYes bool) {
 	fmt.Printf("%sExtracting...\n", sym("info"))
 	newBinary, err := extractBinaryFromTarGz(archivePath, filepath.Base(exePath))
 	if err != nil {
-		// Release assets always contain a binary named "tmux-workspace",
+		// Release assets always contain a binary named "twm",
 		// regardless of what the user renamed their local install to.
-		newBinary, err = extractBinaryFromTarGz(archivePath, "tmux-workspace")
+		newBinary, err = extractBinaryFromTarGz(archivePath, "twm")
 	}
 	if err != nil {
 		fatal("%s%v", sym("error"), err)

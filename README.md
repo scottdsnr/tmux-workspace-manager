@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/scottdsnr/tmux-workspace-manager/ma
 ```
 
 This downloads a prebuilt release binary for your OS/architecture (Linux or
-macOS, amd64 or arm64) to `~/.local/bin/tmux-workspace`, verifies its
+macOS, amd64 or arm64) to `~/.local/bin/twm`, verifies its
 checksum, and makes it executable. No Python, no Go toolchain, no other
 runtime required on the target machine — just `tmux` itself. Inspect
 [`install.sh`](./install.sh) before piping it to `bash` if you'd like to see
@@ -24,26 +24,29 @@ what to add to your shell profile.
 
 **Manual install:** download the archive for your platform from the
 [latest release](https://github.com/scottdsnr/tmux-workspace-manager/releases/latest),
-extract it, and put the `tmux-workspace` binary anywhere on your `PATH`.
-Everything below assumes the command is called `tmux-workspace`; substitute
+extract it, and put the `twm` binary anywhere on your `PATH`.
+Everything below assumes the command is called `twm`; substitute
 your own name/path if you installed it differently.
 
 **Building from source:** with a Go toolchain installed, either
-`go install github.com/scottdsnr/tmux-workspace-manager@latest`, or clone the
-repo and run `go build -o tmux-workspace .`.
+`go install github.com/scottdsnr/tmux-workspace-manager@latest` (this names
+the installed binary `tmux-workspace-manager` — Go always uses the module's
+own name, not `twm` — so rename it afterward if you want the shorter command:
+`mv "$(go env GOPATH)/bin/tmux-workspace-manager" "$(go env GOPATH)/bin/twm"`),
+or clone the repo and run `go build -o twm .`.
 
 ## Quick start
 
-Run `tmux-workspace` with no arguments in a terminal to open the interactive
+Run `twm` with no arguments in a terminal to open the interactive
 dashboard: browse profiles, bring one up or down, create/edit a profile, and
 edit settings, all without leaving the TUI.
 
 ```sh
-tmux-workspace                    # interactive dashboard
-tmux-workspace create myproject   # interactive wizard, writes a profile
-tmux-workspace up myproject       # builds the tmux session and attaches
-tmux-workspace down myproject     # runs teardown, then kills the session
-tmux-workspace list               # show all profiles and which are running
+twm                    # interactive dashboard
+twm create myproject   # interactive wizard, writes a profile
+twm up myproject       # builds the tmux session and attaches
+twm down myproject     # runs teardown, then kills the session
+twm list               # show all profiles and which are running
 ```
 
 Every command above also works non-interactively — piped, redirected, or run
@@ -71,12 +74,12 @@ with no TUI involved.
 | `update`                        | Check GitHub for a newer release and install it in place.           |
 | `update --dry-run`              | Check for a newer release without installing it.                    |
 
-Run `tmux-workspace --help` for the full flag list, including `--no-emoji`.
+Run `twm --help` for the full flag list, including `--no-emoji`.
 
 ## Updating
 
 ```sh
-tmux-workspace update
+twm update
 ```
 
 Checks the latest GitHub release, and if it's newer than the running binary,
@@ -121,7 +124,7 @@ teardown:
 
 - **`project_path`** — the project's working directory. Relative paths are
   resolved against the `base_dir` setting (see below), not the directory
-  `tmux-workspace` was run from.
+  `twm` was run from.
 - **`windows`** — created in order; each pane after the first splits the
   window horizontally, then `layout` (if set) rearranges all of them.
   - **`name`** — the tmux window name.
@@ -154,8 +157,8 @@ Older profiles written as `<alias>.json` (and `.settings/settings.json`) are
 still read automatically — valid JSON is valid YAML. Run:
 
 ```sh
-tmux-workspace upgrade            # convert every legacy .json config to .yml
-tmux-workspace upgrade --dry-run  # preview what would be converted first
+twm upgrade            # convert every legacy .json config to .yml
+twm upgrade --dry-run  # preview what would be converted first
 ```
 
 This converts every `<alias>.json` profile and the settings file to `.yml` in
@@ -172,7 +175,7 @@ currently attached in.
 
 ## Global settings
 
-`tmux-workspace config` opens `~/.config/tmux-workspaces/.settings/settings.yml`,
+`twm config` opens `~/.config/tmux-workspaces/.settings/settings.yml`,
 creating it with defaults on first use:
 
 | Key                  | Default   | Purpose                                                          |
@@ -191,7 +194,7 @@ are left as-is.
 ## Uninstall
 
 ```sh
-rm "$(command -v tmux-workspace)"
+rm "$(command -v twm)"
 ```
 
 Your profiles and settings live in `~/.config/tmux-workspaces/` and are left
