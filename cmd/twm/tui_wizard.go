@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"gopkg.in/yaml.v3"
 )
 
 type wizardStep int
@@ -192,11 +191,11 @@ func (m *wizardModel) updateAlias(msg tea.Msg) (*wizardModel, tea.Cmd) {
 func (m *wizardModel) updateOverwriteConfirm(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
-		case "y", "Y":
+		case "ctrl+y":
 			m.overwriteConfirming = false
 			m.step = stepTitle
 			return m, m.titleInput.Focus()
-		case "n", "N", "esc":
+		case "ctrl+n", "esc":
 			m.overwriteConfirming = false
 		}
 	}
@@ -259,14 +258,14 @@ func (m *wizardModel) updatePath(msg tea.Msg) (*wizardModel, tea.Cmd) {
 func (m *wizardModel) updatePathConfirm(msg tea.Msg) (*wizardModel, tea.Cmd) {
 	if key, ok := msg.(tea.KeyMsg); ok {
 		switch key.String() {
-		case "c", "C":
+		case "ctrl+g":
 			os.MkdirAll(resolveProjectPath(strings.TrimSpace(m.pathInput.Value()), settings.BaseDir), 0755)
 			m.pathConfirming = false
 			return m.goToWindows()
-		case "u", "U":
+		case "ctrl+u":
 			m.pathConfirming = false
 			return m.goToWindows()
-		case "esc", "n", "N":
+		case "esc", "ctrl+n":
 			m.pathConfirming = false
 		}
 	}
@@ -279,28 +278,28 @@ func (m *wizardModel) updateWindowsList(msg tea.Msg) (*wizardModel, tea.Cmd) {
 		case "esc":
 			m.step = stepPath
 			return m, m.pathInput.Focus()
-		case "up", "k":
+		case "up", "ctrl+k":
 			if m.windowCursor > 0 {
 				m.windowCursor--
 			}
-		case "down", "j":
+		case "down", "ctrl+j":
 			if m.windowCursor < len(m.windows)-1 {
 				m.windowCursor++
 			}
-		case "a":
+		case "ctrl+a":
 			m.startWindowEdit(-1)
 		case "enter":
 			if len(m.windows) > 0 {
 				m.startWindowEdit(m.windowCursor)
 			}
-		case "d", "x":
+		case "ctrl+d", "ctrl+x":
 			if len(m.windows) > 0 {
 				m.windows = append(m.windows[:m.windowCursor], m.windows[m.windowCursor+1:]...)
 				if m.windowCursor >= len(m.windows) && m.windowCursor > 0 {
 					m.windowCursor--
 				}
 			}
-		case "n":
+		case "ctrl+n":
 			if len(m.windows) == 0 {
 				m.err = "add at least one window first"
 				return m, nil
@@ -418,7 +417,7 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 		case "esc":
 			m.winEditing = false
 			return m, nil
-		case "s":
+		case "ctrl+s":
 			return m.saveWindowEdit()
 		case "tab":
 			m.blurWindowFields()
@@ -432,15 +431,15 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 
 		if m.winFocus == 3 {
 			switch key.String() {
-			case "up", "k":
+			case "up", "ctrl+k":
 				if m.paneCursor > 0 {
 					m.paneCursor--
 				}
-			case "down", "j":
+			case "down", "ctrl+j":
 				if m.paneCursor < len(m.winPanes)-1 {
 					m.paneCursor++
 				}
-			case "a":
+			case "ctrl+a":
 				m.addingPane = true
 				m.paneEditIndex = -1
 				m.paneInput = newSettingsInput("")
@@ -452,7 +451,7 @@ func (m *wizardModel) updateWindowEdit(msg tea.Msg) (*wizardModel, tea.Cmd) {
 					m.paneInput = newSettingsInput(m.winPanes[m.paneCursor])
 					m.paneInput.Focus()
 				}
-			case "d", "x":
+			case "ctrl+d", "ctrl+x":
 				if len(m.winPanes) > 0 {
 					m.winPanes = append(m.winPanes[:m.paneCursor], m.winPanes[m.paneCursor+1:]...)
 					if m.paneCursor >= len(m.winPanes) && m.paneCursor > 0 {
@@ -507,15 +506,15 @@ func (m *wizardModel) updateTeardown(msg tea.Msg) (*wizardModel, tea.Cmd) {
 		case "esc":
 			m.step = stepWindows
 			return m, nil
-		case "up", "k":
+		case "up", "ctrl+k":
 			if m.teardownCursor > 0 {
 				m.teardownCursor--
 			}
-		case "down", "j":
+		case "down", "ctrl+j":
 			if m.teardownCursor < len(m.teardown)-1 {
 				m.teardownCursor++
 			}
-		case "a":
+		case "ctrl+a":
 			m.addingTeardown = true
 			m.teardownEditIndex = -1
 			m.teardownInput = newSettingsInput("")
@@ -527,14 +526,14 @@ func (m *wizardModel) updateTeardown(msg tea.Msg) (*wizardModel, tea.Cmd) {
 				m.teardownInput = newSettingsInput(m.teardown[m.teardownCursor])
 				m.teardownInput.Focus()
 			}
-		case "d", "x":
+		case "ctrl+d", "ctrl+x":
 			if len(m.teardown) > 0 {
 				m.teardown = append(m.teardown[:m.teardownCursor], m.teardown[m.teardownCursor+1:]...)
 				if m.teardownCursor >= len(m.teardown) && m.teardownCursor > 0 {
 					m.teardownCursor--
 				}
 			}
-		case "n":
+		case "ctrl+n":
 			m.step = stepReview
 		}
 	}
@@ -546,7 +545,7 @@ func (m *wizardModel) updateReview(msg tea.Msg) (*wizardModel, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			m.step = stepTeardown
-		case "s":
+		case "ctrl+s":
 			return m.saveWorkspace()
 		}
 	}
@@ -629,28 +628,13 @@ func (m *wizardModel) rawEditCmd() tea.Cmd {
 	return func() tea.Msg { return screenFinishedMsg{exec: rawEditExecCmd(path), validateAfterExec: alias} }
 }
 
-// previewYAML renders the current draft exactly as saveWorkspace would
-// write it, for the live preview pane.
-func (m *wizardModel) previewYAML() string {
-	node, err := encodeOrdered(m.buildRawConfig(), topLevelOrder)
-	if err != nil {
-		return err.Error()
-	}
-	data, err := yaml.Marshal(node)
-	if err != nil {
-		return err.Error()
-	}
-	return string(data)
-}
-
 func (m *wizardModel) View() string {
 	// Every viewXxx below wraps its panel in a leading/trailing blank line
-	// on its own, which is fine rendered alone but would misalign the two
-	// panels by a row when joined side by side, so normalize before (and
-	// re-add after) combining them.
+	// on its own, which is fine rendered alone but would misalign things if
+	// stacked directly, so normalize before (and re-add after) combining.
 	main := strings.Trim(m.viewMain(), "\n")
-	if preview := m.viewPreview(main); preview != "" {
-		return "\n" + lipgloss.JoinHorizontal(lipgloss.Top, main, preview) + "\n"
+	if preview := m.viewLayoutPreview(main); preview != "" {
+		return "\n" + main + "\n" + preview + "\n"
 	}
 	return "\n" + main + "\n"
 }
@@ -681,37 +665,130 @@ func (m *wizardModel) viewMain() string {
 	return ""
 }
 
-// viewPreview renders a live YAML preview pane alongside main, sized to
-// whatever room is left on the terminal. It returns "" when there isn't
-// enough width to be worth showing (a narrow terminal keeps the plain
-// single-panel layout).
-func (m *wizardModel) viewPreview(main string) string {
-	if m.width <= 0 {
-		return ""
-	}
-	avail := m.width - lipgloss.Width(main) - 2
-	if avail < 40 {
+// viewLayoutPreview renders a live, tmux-shaped preview of the windows and
+// panes being built: one box per window (labeled like a tmux status line),
+// each containing a small grid of boxes for its panes labeled with their
+// command. It's drawn below main rather than beside it, since a wide row of
+// window boxes reads much like the real tmux layout it stands in for.
+//
+// It returns "" when there isn't enough room (width or the remaining
+// height below main) to show anything legible, and when there are no
+// windows yet to preview.
+func (m *wizardModel) viewLayoutPreview(main string) string {
+	if m.width <= 0 || len(m.windows) == 0 {
 		return ""
 	}
 
-	alias := m.alias
-	if alias == "" {
-		alias = "<alias>"
+	availHeight := m.height - lipgloss.Height(main) - 3
+	if availHeight < 6 {
+		return ""
 	}
-	body := titleStyle.Render("Preview") + "\n" +
-		subtleStyle.Render(alias+".yml") + "\n\n" +
-		strings.TrimRight(m.previewYAML(), "\n") + "\n\n" +
-		subtleStyle.Render("^R edit raw yaml")
+	if availHeight > 14 {
+		availHeight = 14 // a tall terminal still gets a compact strip, not a giant one
+	}
+	availWidth := m.width - 4
+	if availWidth < 20 {
+		return ""
+	}
 
-	contentWidth := avail - 2
-	if contentWidth > 64 {
-		contentWidth = 64 // wide terminals still get a readable column, not a stretched one
+	winWidth := availWidth / len(m.windows)
+	if winWidth < 12 {
+		// Too many windows to lay out side by side legibly; showing a
+		// squashed, unreadable row is worse than showing nothing.
+		return ""
 	}
-	style := panelStyle
-	if contentWidth > 0 {
-		style = style.Width(contentWidth)
+
+	boxes := make([]string, len(m.windows))
+	for i, w := range m.windows {
+		boxes[i] = renderWindowBox(i+1, w, winWidth, availHeight-2)
 	}
-	return style.Render(body)
+
+	// panelStyle is deliberately left un-widthed here: the boxes below are
+	// already sized to fit within availWidth, and asking lipgloss to
+	// re-wrap pre-rendered, ANSI-colored, border-heavy content to an exact
+	// width corrupts the borders (it word-wraps mid-box with no good break
+	// point).
+	body := titleStyle.Render("Layout preview") + "\n" +
+		lipgloss.JoinHorizontal(lipgloss.Top, boxes...)
+	return panelStyle.Render(body)
+}
+
+// renderWindowBox draws one tmux-window-shaped box: an index:name header
+// like tmux's status line, followed by a grid of pane boxes sized to fit.
+func renderWindowBox(index int, w wizardWindowDraft, width, height int) string {
+	if width < 6 {
+		width = 6
+	}
+	if height < 3 {
+		height = 3
+	}
+	header := accentStyle.Render(fmt.Sprintf("%d:%s", index, w.name))
+	panes := renderPaneGrid(w.panes, width, height-1)
+	return lipgloss.NewStyle().Width(width).Render(header) + "\n" + panes
+}
+
+// renderPaneGrid arranges pane boxes in a roughly square grid (matching how
+// tmux tiles panes reasonably well without reimplementing its actual split
+// algorithm) and joins them into a block sized to width x height.
+func renderPaneGrid(panes []string, width, height int) string {
+	if len(panes) == 0 {
+		panes = []string{""}
+	}
+	cols := 1
+	for cols*cols < len(panes) {
+		cols++
+	}
+	rows := (len(panes) + cols - 1) / cols
+
+	cellWidth := width / cols
+	cellHeight := height / rows
+
+	var rowStrs []string
+	for r := 0; r < rows; r++ {
+		var cellStrs []string
+		for c := 0; c < cols; c++ {
+			idx := r*cols + c
+			if idx >= len(panes) {
+				cellStrs = append(cellStrs, lipgloss.NewStyle().Width(cellWidth).Height(cellHeight).Render(""))
+				continue
+			}
+			cellStrs = append(cellStrs, renderPaneBox(panes[idx], cellWidth, cellHeight))
+		}
+		rowStrs = append(rowStrs, lipgloss.JoinHorizontal(lipgloss.Top, cellStrs...))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rowStrs...)
+}
+
+// renderPaneBox draws a single bordered pane box labeled with its command.
+func renderPaneBox(command string, width, height int) string {
+	label := command
+	if label == "" {
+		label = "(shell)"
+	}
+	contentWidth := width - 2 // border
+	contentHeight := height - 2
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	if contentHeight < 1 {
+		contentHeight = 1
+	}
+	style := lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorBorder).
+		Width(contentWidth).
+		Height(contentHeight)
+	return style.Render(subtleStyle.Render(truncate(label, contentWidth)))
+}
+
+func truncate(s string, width int) string {
+	if width <= 0 || len(s) <= width {
+		return s
+	}
+	if width <= 1 {
+		return s[:width]
+	}
+	return s[:width-1] + "…"
 }
 
 func (m *wizardModel) viewAlias() string {
@@ -741,14 +818,14 @@ func (m *wizardModel) viewSimpleField(title, label string, input textinput.Model
 func (m *wizardModel) viewOverwriteConfirm() string {
 	body := warnStyle.Render(sym("warn")+"Alias exists") + "\n\n" +
 		fmt.Sprintf("'%s' already has a profile. Overwrite it?", m.alias) + "\n\n" +
-		subtleStyle.Render("[y] overwrite   [n/esc] cancel")
+		subtleStyle.Render("[^Y] overwrite   [^N/esc] cancel")
 	return "\n" + panelStyle.Render(body) + "\n"
 }
 
 func (m *wizardModel) viewPathConfirm() string {
 	body := warnStyle.Render(sym("warn")+"Path does not exist") + "\n\n" +
 		m.pathWarning + "\n\n" +
-		subtleStyle.Render("[c] create it   [u] use anyway   [esc] back")
+		subtleStyle.Render("[^G] create it   [^U] use anyway   [esc] back")
 	return "\n" + panelStyle.Render(body) + "\n"
 }
 
@@ -757,7 +834,7 @@ func (m *wizardModel) viewWindowsList() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Windows (%d)", len(m.windows))))
 	b.WriteString("\n\n")
 	if len(m.windows) == 0 {
-		b.WriteString(subtleStyle.Render("  no windows yet — press 'a' to add one"))
+		b.WriteString(subtleStyle.Render("  no windows yet — press ^A to add one"))
 		b.WriteString("\n")
 	}
 	for i, w := range m.windows {
@@ -773,7 +850,7 @@ func (m *wizardModel) viewWindowsList() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
-	b.WriteString(subtleStyle.Render("a add   enter edit   d delete   n next: teardown   esc back   ^R raw edit"))
+	b.WriteString(subtleStyle.Render("^A add   enter edit   ^D delete   ^N next: teardown   esc back   ^R raw edit"))
 	return "\n" + panelStyle.Render(strings.TrimRight(b.String(), "\n")) + "\n"
 }
 
@@ -803,7 +880,7 @@ func (m *wizardModel) viewWindowEdit() string {
 	}
 	b.WriteString(panesLabel + "\n")
 	if len(m.winPanes) == 0 && !m.addingPane {
-		b.WriteString("    " + subtleStyle.Render("no panes yet — press 'a' to add one") + "\n")
+		b.WriteString("    " + subtleStyle.Render("no panes yet — press ^A to add one") + "\n")
 	}
 	for i, p := range m.winPanes {
 		cursor := "    "
@@ -827,12 +904,12 @@ func (m *wizardModel) viewWindowEdit() string {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
 
-	help := "tab next field   s save window   esc cancel"
+	help := "tab next field   ^S save window   esc cancel"
 	switch {
 	case m.addingPane:
 		help = "enter confirm   esc cancel"
 	case m.winFocus == 3:
-		help = "a add pane   enter edit pane   d delete pane   tab next field   s save window   esc cancel"
+		help = "^A add pane   enter edit pane   ^D delete pane   tab next field   ^S save window   esc cancel"
 	}
 	b.WriteString(subtleStyle.Render(help))
 	return "\n" + panelStyle.Render(strings.TrimRight(b.String(), "\n")) + "\n"
@@ -843,7 +920,7 @@ func (m *wizardModel) viewTeardown() string {
 	b.WriteString(titleStyle.Render(fmt.Sprintf("Teardown commands (%d)", len(m.teardown))))
 	b.WriteString("\n\n")
 	if len(m.teardown) == 0 {
-		b.WriteString(subtleStyle.Render("  none set — press 'a' to add one"))
+		b.WriteString(subtleStyle.Render("  none set — press ^A to add one"))
 		b.WriteString("\n")
 	}
 	for i, t := range m.teardown {
@@ -862,7 +939,7 @@ func (m *wizardModel) viewTeardown() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
-	help := "a add   enter edit   d delete   n next: review   esc back   ^R raw edit"
+	help := "^A add   enter edit   ^D delete   ^N next: review   esc back   ^R raw edit"
 	if m.addingTeardown {
 		help = "enter confirm   esc cancel"
 	}
@@ -919,6 +996,6 @@ func (m *wizardModel) viewReview() string {
 	if m.err != "" {
 		b.WriteString(errorStyle.Render(m.err) + "\n\n")
 	}
-	b.WriteString(subtleStyle.Render("s save   esc back   ^R raw edit"))
+	b.WriteString(subtleStyle.Render("^S save   esc back   ^R raw edit"))
 	return "\n" + panelStyle.Render(strings.TrimRight(b.String(), "\n")) + "\n"
 }
