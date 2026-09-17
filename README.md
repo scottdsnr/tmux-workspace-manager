@@ -201,10 +201,20 @@ creating it with defaults on first use:
 | `editor`              | `"nano"`  | Fallback editor for `edit --raw` / `config` if `$EDITOR` is unset. |
 | `confirm_down`        | `true`    | Prompt for confirmation before `down` (unless `-y` is passed).     |
 | `use_emoji`           | `true`    | Toggle emoji in output (also settable per-run with `--no-emoji`).  |
+| `quit_on_switch`      | `false`   | Quit the dashboard after switching to a workspace instead of returning to the list. |
 
 Example: if `base_dir` is `~/code`, a profile with `"project_path": "myapp"`
 resolves to `~/code/myapp`. Absolute paths and `~`-paths in `project_path`
 are left as-is.
+
+`quit_on_switch` only affects the dashboard. By default it stays open behind
+the workspace you opened, so you come back to the list when you return —
+handy in a plain terminal, less so from inside tmux, where `switch-client`
+moves you to the workspace immediately and leaves the dashboard sitting in
+the pane it was launched from. Turn it on and twm exits as soon as it has
+handed over: the dashboard is gone from that pane after a switch, and from a
+plain terminal twm ends when the attached session does. Direct commands
+(`twm up myapp`) already exit this way regardless of the setting.
 
 ## Uninstall
 
