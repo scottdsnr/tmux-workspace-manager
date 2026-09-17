@@ -64,7 +64,7 @@ func runUp(alias string, dry bool, report reportFunc) error {
 		var currentPaneID string
 		if winIdx == 0 {
 			currentPaneID = tmuxNewSession(sessionName, winName, firstPaneDir)
-			tmuxSetOption(sessionName, "base-index", settings.WindowBaseIndex, false)
+			tmuxSetSessionOption(sessionName, "base-index", settings.WindowBaseIndex)
 			tmuxRenumberWindows(sessionName)
 		} else {
 			currentPaneID = tmuxNewWindow(sessionName, prevWinName, winName, firstPaneDir)
@@ -73,7 +73,7 @@ func runUp(alias string, dry bool, report reportFunc) error {
 		// pane-base-index is a per-window option: "-w -t session" only ever
 		// touches the session's *current* window, so it has to be set again,
 		// explicitly per window, right after each one is created.
-		tmuxSetOption(sessionName+":"+winName, "pane-base-index", settings.PaneBaseIndex, true)
+		tmuxSetWindowOption(sessionName, winName, "pane-base-index", settings.PaneBaseIndex)
 
 		if len(panes) > 0 {
 			sendPaneCommand(currentPaneID, config, win, panes[0])
@@ -86,7 +86,7 @@ func runUp(alias string, dry bool, report reportFunc) error {
 		}
 
 		if win.Layout != "" {
-			tmuxSelectLayout(sessionName+":"+winName, win.Layout)
+			tmuxSelectLayout(sessionName, winName, win.Layout)
 		}
 
 		prevWinName = winName
