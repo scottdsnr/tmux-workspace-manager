@@ -48,25 +48,58 @@ func tmuxRun(args []string) string {
 	return strings.TrimSpace(tmuxQuery(args).stdout)
 }
 
+// tmux resolves a bare "-t name" loosely: it tries an exact match first, but
+// falls back to any session (or window) the name is a *prefix* of, and then
+// to an fnmatch pattern. With neighbouring workspaces like "am" and
+// "am-app" that silently crosses the wires — "tmux has-session -t am"
+// succeeds while only "am-app" is running, so `up am` reports the wrong
+// workspace as already running and attaches to its neighbour, and `down am`
+// would tear that neighbour down. Prefixing a name with "=" forces tmux to
+// match it literally, so every target we build below is an exact one.
+//
+// sessionTarget is for commands that take a target-session (has-session,
+// kill-session, list-windows, move-window, attach-session, switch-client).
+func sessionTarget(session string) string {
+	return "=" + session
+}
+
+// sessionPaneTarget is for commands whose -t is resolved as a pane/window
+// even when we only mean a session (display-message, set-option). A bare
+// "=name" is read there as a literal pane name and matches nothing; the
+// trailing ":" makes tmux resolve it as that session's current window.
+func sessionPaneTarget(session string) string {
+	return "=" + session + ":"
+}
+
+// windowTarget builds an exact "session:window" target — both halves need
+// their own "=", since window names match by prefix too.
+func windowTarget(session, window string) string {
+	return "=" + session + ":=" + window
+}
+
 func hasSession(name string) bool {
-	return tmuxQuery([]string{"tmux", "has-session", "-t", name}).code == 0
+	return tmuxQuery([]string{"tmux", "has-session", "-t", sessionTarget(name)}).code == 0
 }
 
 // sessionAttached reports whether any client currently has session open.
 // Used to distinguish "running, and someone's looking at it" from "running
 // in the background" in status output.
 func sessionAttached(session string) bool {
-	res := tmuxQuery([]string{"tmux", "display-message", "-p", "-t", session, "#{session_attached}"})
-	if res.code != 0 {
+	res := tmuxQuery([]string{"tmux", "display-message", "-p", "-t", sessionPaneTarget(session), "#{session_attached}"})
+	// An unresolvable target isn't an error here — display-message still
+	// exits 0 and just prints nothing — so empty output means "no such
+	// session", not "attached".
+	out := strings.TrimSpace(res.stdout)
+	if res.code != 0 || out == "" {
 		return false
 	}
-	return strings.TrimSpace(res.stdout) != "0"
+	return out != "0"
 }
 
 // windowCount returns how many windows currently exist in session (which can
 // drift from the profile's window count if one was closed or added by hand).
 func windowCount(session string) int {
-	res := tmuxQuery([]string{"tmux", "list-windows", "-t", session, "-F", "#{window_index}"})
+	res := tmuxQuery([]string{"tmux", "list-windows", "-t", sessionTarget(session), "-F", "#{window_index}"})
 	if res.code != 0 {
 		return 0
 	}
@@ -78,7 +111,7 @@ func windowCount(session string) int {
 }
 
 func listPaneIDs(sessionName, winName string) []string {
-	res := tmuxQuery([]string{"tmux", "list-panes", "-t", sessionName + ":" + winName, "-F", "#{pane_id}"})
+	res := tmuxQuery([]string{"tmux", "list-panes", "-t", windowTarget(sessionName, winName), "-F", "#{pane_id}"})
 	var ids []string
 	for _, line := range strings.Split(res.stdout, "\n") {
 		line = strings.TrimSpace(line)
@@ -94,7 +127,7 @@ func tmuxNewSession(session, winName, cwd string) string {
 }
 
 func tmuxNewWindow(session, prevWinName, winName, cwd string) string {
-	return tmuxRun([]string{"tmux", "new-window", "-a", "-t", session + ":" + prevWinName, "-n", winName, "-c", cwd,
+	return tmuxRun([]string{"tmux", "new-window", "-a", "-t", windowTarget(session, prevWinName), "-n", winName, "-c", cwd,
 		"-P", "-F", "#{pane_id}"})
 }
 
@@ -110,29 +143,32 @@ func tmuxSendCtrlC(paneID string) {
 	tmuxRun([]string{"tmux", "send-keys", "-t", paneID, "C-c"})
 }
 
-func tmuxSetOption(session, name string, value interface{}, windowOption bool) {
-	args := []string{"tmux", "set-option"}
-	if windowOption {
-		args = append(args, "-w")
-	}
-	args = append(args, "-t", session, name, fmt.Sprintf("%v", value))
-	tmuxRun(args)
+// tmuxSetSessionOption sets a session-scoped option (e.g. base-index) on
+// session.
+func tmuxSetSessionOption(session, name string, value interface{}) {
+	tmuxRun([]string{"tmux", "set-option", "-t", sessionPaneTarget(session), name, fmt.Sprintf("%v", value)})
+}
+
+// tmuxSetWindowOption sets a window-scoped option (e.g. pane-base-index) on
+// one specific window of session.
+func tmuxSetWindowOption(session, winName, name string, value interface{}) {
+	tmuxRun([]string{"tmux", "set-option", "-w", "-t", windowTarget(session, winName), name, fmt.Sprintf("%v", value)})
 }
 
 func tmuxRenumberWindows(session string) {
-	tmuxRun([]string{"tmux", "move-window", "-r", "-t", session})
+	tmuxRun([]string{"tmux", "move-window", "-r", "-t", sessionTarget(session)})
 }
 
 // tmuxSelectLayout applies a layout (a preset name like "tiled", or a
-// literal tmux layout string) to every pane in target ("session:window").
+// literal tmux layout string) to every pane in session's winName window.
 // Run after all of a window's panes have been created, since layouts are a
 // pane-count-dependent arrangement.
-func tmuxSelectLayout(target, layout string) {
-	tmuxRun([]string{"tmux", "select-layout", "-t", target, layout})
+func tmuxSelectLayout(session, winName, layout string) {
+	tmuxRun([]string{"tmux", "select-layout", "-t", windowTarget(session, winName), layout})
 }
 
 func tmuxKillSession(session string) {
-	tmuxRun([]string{"tmux", "kill-session", "-t", session})
+	tmuxRun([]string{"tmux", "kill-session", "-t", sessionTarget(session)})
 }
 
 // insideTmux reports whether this process is itself running inside a tmux
@@ -147,9 +183,9 @@ func insideTmux() bool {
 // tmux, so opening one workspace from within another never nests sessions.
 func attachArgs(session string) []string {
 	if insideTmux() {
-		return []string{"tmux", "switch-client", "-t", session}
+		return []string{"tmux", "switch-client", "-t", sessionTarget(session)}
 	}
-	return []string{"tmux", "attach-session", "-t", session}
+	return []string{"tmux", "attach-session", "-t", sessionTarget(session)}
 }
 
 func tmuxAttach(session string) {
