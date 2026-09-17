@@ -113,7 +113,7 @@ func (m dashboardModel) Update(msg tea.Msg) (dashboardModel, tea.Cmd) {
 						// Already running: jump straight in rather than
 						// running the up-progress screen just to report
 						// "already running" before attaching anyway.
-						return m, func() tea.Msg { return screenFinishedMsg{exec: attachExecCmd(it.alias)} }
+						return m, func() tea.Msg { return attachFinishedMsg(it.alias) }
 					}
 					return m, func() tea.Msg { return pushUpMsg{alias: it.alias} }
 				}

@@ -18,18 +18,20 @@ const (
 	fieldEditor
 	fieldConfirmDown
 	fieldUseEmoji
+	fieldQuitOnSwitch
 	fieldCount
 )
 
 type settingsModel struct {
-	focus       settingsField
-	baseDir     textinput.Model
-	windowIndex textinput.Model
-	paneIndex   textinput.Model
-	editor      textinput.Model
-	confirmDown bool
-	useEmoji    bool
-	err         string
+	focus        settingsField
+	baseDir      textinput.Model
+	windowIndex  textinput.Model
+	paneIndex    textinput.Model
+	editor       textinput.Model
+	confirmDown  bool
+	useEmoji     bool
+	quitOnSwitch bool
+	err          string
 }
 
 func newSettingsInput(val string) textinput.Model {
@@ -43,12 +45,13 @@ func newSettingsInput(val string) textinput.Model {
 func newSettingsModel() *settingsModel {
 	cur := settings
 	m := &settingsModel{
-		baseDir:     newSettingsInput(cur.BaseDir),
-		windowIndex: newSettingsInput(strconv.Itoa(cur.WindowBaseIndex)),
-		paneIndex:   newSettingsInput(strconv.Itoa(cur.PaneBaseIndex)),
-		editor:      newSettingsInput(cur.Editor),
-		confirmDown: cur.ConfirmDown,
-		useEmoji:    cur.UseEmoji,
+		baseDir:      newSettingsInput(cur.BaseDir),
+		windowIndex:  newSettingsInput(strconv.Itoa(cur.WindowBaseIndex)),
+		paneIndex:    newSettingsInput(strconv.Itoa(cur.PaneBaseIndex)),
+		editor:       newSettingsInput(cur.Editor),
+		confirmDown:  cur.ConfirmDown,
+		useEmoji:     cur.UseEmoji,
+		quitOnSwitch: cur.QuitOnSwitch,
 	}
 	m.baseDir.Focus()
 	return m
@@ -96,6 +99,7 @@ func (m *settingsModel) save() (*settingsModel, tea.Cmd) {
 		Editor:          strings.TrimSpace(m.editor.Value()),
 		ConfirmDown:     m.confirmDown,
 		UseEmoji:        m.useEmoji,
+		QuitOnSwitch:    m.quitOnSwitch,
 	}
 	if newSettings.BaseDir == "" {
 		newSettings.BaseDir = "~"
@@ -132,6 +136,9 @@ func (m *settingsModel) Update(msg tea.Msg) (*settingsModel, tea.Cmd) {
 				return m, nil
 			case fieldUseEmoji:
 				m.useEmoji = !m.useEmoji
+				return m, nil
+			case fieldQuitOnSwitch:
+				m.quitOnSwitch = !m.quitOnSwitch
 				return m, nil
 			}
 		case "enter":
@@ -177,6 +184,7 @@ func (m *settingsModel) View() string {
 		row("editor", fieldEditor, m.editor.View()),
 		row("confirm_down", fieldConfirmDown, checkbox(m.confirmDown)+subtleStyle.Render("  space to toggle")),
 		row("use_emoji", fieldUseEmoji, checkbox(m.useEmoji)+subtleStyle.Render("  space to toggle")),
+		row("quit_on_switch", fieldQuitOnSwitch, checkbox(m.quitOnSwitch)+subtleStyle.Render("  quit twm after switching to a workspace")),
 		"",
 	}
 	if m.err != "" {

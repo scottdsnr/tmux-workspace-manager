@@ -42,6 +42,10 @@ type Settings struct {
 	Editor          string `yaml:"editor"`
 	ConfirmDown     bool   `yaml:"confirm_down"`
 	UseEmoji        bool   `yaml:"use_emoji"`
+	// QuitOnSwitch makes the dashboard exit once it has handed the terminal
+	// over to a workspace, instead of coming back to the workspace list.
+	// Off by default so the dashboard stays where it was.
+	QuitOnSwitch bool `yaml:"quit_on_switch"`
 }
 
 var defaultSettings = Settings{
@@ -51,6 +55,7 @@ var defaultSettings = Settings{
 	Editor:          "nano",
 	ConfirmDown:     true,
 	UseEmoji:        true,
+	QuitOnSwitch:    false,
 }
 
 // settings is the process-wide active settings, mutated by loadSettings and

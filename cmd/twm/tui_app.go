@@ -28,14 +28,18 @@ type (
 	// validateAfterExec is also set, the router lands on the validate screen
 	// for that alias once the exec'd process exits, instead of going
 	// straight back to the dashboard — used after a raw-YAML edit so
-	// mistakes surface immediately.
+	// mistakes surface immediately. quitAfterExec makes the whole app exit
+	// once the exec'd process is done instead of returning to the dashboard
+	// — set for workspace jumps when the quit_on_switch setting is on.
 	screenFinishedMsg struct {
 		exec              *exec.Cmd
 		validateAfterExec string
+		quitAfterExec     bool
 	}
 	execFinishedMsg struct {
 		err               error
 		validateAfterExec string
+		quitAfterExec     bool
 	}
 )
 
@@ -160,13 +164,17 @@ func (m appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.exec != nil {
 			cmd := msg.exec
 			validateAlias := msg.validateAfterExec
+			quitAfter := msg.quitAfterExec
 			return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-				return execFinishedMsg{err: err, validateAfterExec: validateAlias}
+				return execFinishedMsg{err: err, validateAfterExec: validateAlias, quitAfterExec: quitAfter}
 			})
 		}
 		return m.toDashboard()
 
 	case execFinishedMsg:
+		if msg.quitAfterExec {
+			return m, tea.Quit
+		}
 		if msg.validateAfterExec != "" {
 			m.screen = screenValidate
 			m.validate = newValidateModel(msg.validateAfterExec)
@@ -248,7 +256,7 @@ func newUpProgressModel(alias string) *progressModel {
 		if err != nil {
 			return func() tea.Msg { return screenFinishedMsg{} }
 		}
-		return func() tea.Msg { return screenFinishedMsg{exec: attachExecCmd(alias)} }
+		return func() tea.Msg { return attachFinishedMsg(alias) }
 	}
 	title := "Building '" + alias + "'"
 	hint := "press any key to attach"
@@ -272,6 +280,16 @@ func newDownProgressModel(alias string) *progressModel {
 func attachExecCmd(alias string) *exec.Cmd {
 	args := attachArgs(alias)
 	return exec.Command(args[0], args[1:]...)
+}
+
+// attachFinishedMsg is the screenFinishedMsg that jumps into alias's
+// session. With quit_on_switch on, twm exits once it has handed the
+// terminal over — from inside tmux that means switch-client moves the
+// client to the workspace and the dashboard doesn't linger in the pane it
+// was launched from; from a plain terminal it means twm is done once the
+// attached session ends, rather than reopening the dashboard.
+func attachFinishedMsg(alias string) screenFinishedMsg {
+	return screenFinishedMsg{exec: attachExecCmd(alias), quitAfterExec: settings.QuitOnSwitch}
 }
 
 func runTUIProgram(m tea.Model) {
